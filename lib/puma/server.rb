@@ -395,7 +395,7 @@ module Puma
                     end
 
                     pool << client
-                    busy_threads = pool.wait_until_not_full
+                    busy_threads = pool.wait_until_not_full(sock)
                     if busy_threads == 0
                       @options[:out_of_band].each(&:call) if @options[:out_of_band]
                     end

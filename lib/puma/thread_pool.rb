@@ -23,6 +23,12 @@ module Puma
     # up its work before leaving the thread to die on the vine.
     SHUTDOWN_GRACE_TIME = 5 # seconds
 
+    # Duration between non-blocking socket polls
+    # when extra threads are available but no work.
+    # This setting helps load-balance work across multiple processes
+    # before balancing across multiple threads.
+    WORK_AVAILABLE_TIMEOUT = ENV.fetch('WORK_AVAILABLE_TIMEOUT', 0.1).to_f # seconds
+
     # Maintain a minimum of +min+ and maximum of +max+ threads
     # in the pool.
     #
@@ -77,6 +83,10 @@ module Puma
 
     def pool_capacity
       waiting + (@max - spawned)
+    end
+
+    def busy
+      @spawned - waiting + @todo.size
     end
 
     # :nodoc:
@@ -191,25 +201,20 @@ module Puma
     # then the `@todo` array would stay the same size as the reactor works
     # to try to buffer the request. In that scenario the next call to this
     # method would not block and another request would be added into the reactor
-    # by the server. This would continue until a fully bufferend request
+    # by the server. This would continue until a fully buffered request
     # makes it through the reactor and can then be processed by the thread pool.
     #
-    # Returns the current number of busy threads, or +nil+ if shutting down.
+    # Returns the current number of busy threads.
     #
-    def wait_until_not_full
+    def wait_until_not_full(sock)
       @mutex.synchronize do
-        while true
-          return if @shutdown
-
-          # If we can still spin up new threads and there
-          # is work queued that cannot be handled by waiting
-          # threads, then accept more work until we would
-          # spin up the max number of threads.
-          busy_threads = @spawned - @waiting + @todo.size
-          return busy_threads if @max > busy_threads
-
-          @not_full.wait @mutex
+        until @shutdown
+          break if busy.zero? || IO.select([sock], nil, nil, 0)
+          timeout = busy >= @max ? nil : (busy.to_f / @max) * WORK_AVAILABLE_TIMEOUT
+          @not_full.wait @mutex, timeout
         end
+
+        busy
       end
     end
 
