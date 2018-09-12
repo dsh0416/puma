@@ -198,7 +198,7 @@ module Puma
     # method would not block and another request would be added into the reactor
     # by the server. This would continue until a fully buffered request
     # makes it through the reactor and can then be processed by the thread pool.
-    def wait_until_not_full(sock)
+    def wait_until_not_full(sock, out_of_band)
       @mutex.synchronize do
         while true
           return if @shutdown
@@ -206,18 +206,25 @@ module Puma
           busy_threads = @spawned - @waiting + @todo.size
           threads_available = @max - busy_threads > 0
 
-          # Accept more work if no threads are busy,
-          # or if extra threads and non-blocking work are available.
-          return if busy_threads.zero? ||
-            (threads_available && IO.select([sock], nil, nil, 0))
+          # If worker is full, wait until a thread finishes.
+          unless threads_available
+            @not_full.wait @mutex
+            redo
+          end
 
-          # If threads are available but no work,
-          # check for work again after a short timeout.
-          # Otherwise if threads are busy, block without timeout
-          # until a thread finishes its work.
-          timeout = threads_available ? WORK_AVAILABLE_TIMEOUT : nil
+          # If worker is idle, accept some work.
+          if busy_threads.zero?
+            # Run out of band hooks if no work is available.
+            out_of_band && out_of_band.each(&:call) if IO.select([sock], nil, nil, 0).nil?
+            return
+          end
 
-          @not_full.wait @mutex, timeout
+          # If extra work is available, accept more work.
+          return if IO.select([sock], nil, nil, 0)
+
+          # If no work is available, check again after a
+          # thread finishes or a short timeout.
+          @not_full.wait @mutex, WORK_AVAILABLE_TIMEOUT
         end
       end
     end

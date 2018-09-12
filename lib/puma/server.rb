@@ -396,7 +396,7 @@ module Puma
                     end
 
                     pool << client
-                    pool.wait_until_not_full(sock)
+                    pool.wait_until_not_full(sock, @options[:out_of_band])
                   end
                 rescue SystemCallError
                   # nothing
