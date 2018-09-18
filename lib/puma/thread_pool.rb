@@ -198,18 +198,21 @@ module Puma
     # method would not block and another request would be added into the reactor
     # by the server. This would continue until a fully buffered request
     # makes it through the reactor and can then be processed by the thread pool.
-    def wait_until_not_full(sock)
+    def wait_until_not_full(server)
       @mutex.synchronize do
         while true
           return if @shutdown
 
           busy_threads = @spawned - @waiting + @todo.size
+          server.thread_depth = busy_threads
           threads_available = @max - busy_threads > 0
 
-          # Accept more work if no threads are busy,
-          # or if extra threads and non-blocking work are available.
-          return if busy_threads.zero? ||
-            (threads_available && IO.select([sock], nil, nil, 0))
+          return if busy_threads.zero?
+
+          # Accept work if current thread depth
+          # is lowest across all processes.
+          return if threads_available &&
+            busy_threads <= server.thread_depth
 
           # If threads are available but no work,
           # check for work again after a short timeout.

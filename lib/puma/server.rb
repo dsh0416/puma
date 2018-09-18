@@ -82,6 +82,8 @@ module Puma
       @leak_stack_on_error = true
 
       @options = options
+      @index = options[:index]
+      @thread_depth = options[:thread_depth]
       @queue_requests = options[:queue_requests].nil? ? true : options[:queue_requests]
 
       ENV['RACK_ENV'] ||= "development"
@@ -396,7 +398,7 @@ module Puma
                     end
 
                     pool << client
-                    pool.wait_until_not_full(sock)
+                    pool.wait_until_not_full(self)
                   end
                 rescue SystemCallError
                   # nothing
@@ -1005,6 +1007,15 @@ module Puma
     private :fast_write
 
     ThreadLocalKey = :puma_server
+
+    def thread_depth
+      @thread_depth ? @thread_depth.to_ary.min : 0
+    end
+
+    def thread_depth=(value)
+      return unless @thread_depth && @index
+      @thread_depth[@index] = value
+    end
 
     def self.current
       Thread.current[ThreadLocalKey]

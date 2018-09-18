@@ -2,6 +2,7 @@ require 'puma/runner'
 require 'puma/util'
 require 'puma/plugin'
 
+require 'raindrops'
 require 'time'
 
 module Puma
@@ -125,6 +126,9 @@ module Puma
     end
 
     def spawn_workers
+      @options[:thread_depth] ||= Raindrops.new(@options[:workers])
+      @options[:thread_depth].size = @options[:workers]
+
       diff = @options[:workers] - @workers.size
       return if diff < 1
 
@@ -269,6 +273,8 @@ module Puma
       # Invoke any worker boot hooks so they can get
       # things in shape before booting the app.
       @launcher.config.run_hooks :before_worker_boot, index
+
+      @options[:index] = index
 
       server = start_server
 
