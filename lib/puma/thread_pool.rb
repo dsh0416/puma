@@ -25,7 +25,13 @@ module Puma
     # when extra threads are available but no work.
     # This setting helps load-balance work across multiple processes
     # before balancing across multiple threads.
-    WORK_AVAILABLE_TIMEOUT = 1 # seconds
+    WORK_AVAILABLE_TIMEOUT = 0.01 # seconds
+
+    # Minimum duration an unlocked thread is unlocked
+    # before the worker-process will begin to schedule additional requests.
+    # If threads are unlocked less than this time, the cost of thread contention
+    # will generally outweigh the benefit of parallelism.
+    THREAD_UNLOCK_MIN = 0.1 # seconds
 
     # Maintain a minimum of +min+ and maximum of +max+ threads
     # in the pool.
@@ -206,18 +212,37 @@ module Puma
           busy_threads = @spawned - @waiting + @todo.size
           threads_available = @max - busy_threads > 0
 
-          # Accept more work if no threads are busy,
-          # or if extra threads and non-blocking work are available.
-          return if busy_threads.zero? ||
-            (threads_available && IO.select([sock], nil, nil, 0))
+          # Accept more work if no threads are busy.
+          return if busy_threads.zero?
+
+          wait_timeout = nil
+
+          # or if extra threads are available,
+          if threads_available
+            now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            worker_waits = @workers.map do |t|
+              (unlock_start = t[Puma::Server::UnlockedKey]) &&
+                now - unlock_start
+            end.compact
+            unlocked_workers = worker_waits.count {|wait| wait > THREAD_UNLOCK_MIN}
+            workers_unlocked = unlocked_workers >= busy_threads
+
+            wait_timeout = WORK_AVAILABLE_TIMEOUT
+
+            if workers_unlocked
+              return if IO.select([sock], nil, nil, 0)
+            else
+              wait_timeout = [wait_timeout, THREAD_UNLOCK_MIN - worker_waits.min].max unless worker_waits.empty?
+            end
+          end
 
           # If threads are available but no work,
           # check for work again after a short timeout.
           # Otherwise if threads are busy, block without timeout
           # until a thread finishes its work.
-          timeout = threads_available ? WORK_AVAILABLE_TIMEOUT : nil
 
-          @not_full.wait @mutex, timeout
+
+          @not_full.wait @mutex, wait_timeout
         end
       end
     end
