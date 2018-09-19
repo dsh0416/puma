@@ -1024,5 +1024,17 @@ module Puma
     def shutting_down?
       @status == :stop || @status == :restart
     end
+
+    UnlockedKey = :puma_unlocked
+
+    def self.unlocked
+      Thread.current[UnlockedKey] = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      thread_pool = current.instance_variable_get(:@thread_pool)
+      not_full = thread_pool.instance_variable_get(:@not_full)
+      not_full.signal
+      yield
+    ensure
+      Thread.current[UnlockedKey] = nil
+    end
   end
 end

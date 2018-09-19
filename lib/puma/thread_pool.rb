@@ -27,6 +27,12 @@ module Puma
     # before balancing across multiple threads.
     WORK_AVAILABLE_TIMEOUT = 1 # seconds
 
+    # Minimum duration an unlocked thread is unlocked
+    # before the worker-process will begin to schedule additional requests.
+    # If threads are unlocked less than this time, the cost of thread contention
+    # will generally outweigh the benefit of parallelism.
+    THREAD_UNLOCK_MIN = 0.05 # seconds
+
     # Maintain a minimum of +min+ and maximum of +max+ threads
     # in the pool.
     #
@@ -203,24 +209,31 @@ module Puma
         while true
           return if @shutdown
 
+          now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          worker_waits = @workers.map do |t|
+            (unlock_start = t[Puma::Server::UnlockedKey]) &&
+              now - unlock_start
+          end.compact
+          unlocked_workers = worker_waits.count {|wait| wait > THREAD_UNLOCK_MIN}
+
           busy_threads = @spawned - @waiting + @todo.size
-          server.thread_depth = busy_threads
+          thread_depth = busy_threads - unlocked_workers
+          server.thread_depth = thread_depth
+
           threads_available = @max - busy_threads > 0
 
           return if busy_threads.zero?
 
+          unless threads_available
+            @not_full.wait @mutex
+            redo
+          end
+
           # Accept work if current thread depth
           # is lowest across all processes.
-          return if threads_available &&
-            busy_threads <= server.thread_depth
+          return if thread_depth <= server.thread_depth
 
-          # If threads are available but no work,
-          # check for work again after a short timeout.
-          # Otherwise if threads are busy, block without timeout
-          # until a thread finishes its work.
-          timeout = threads_available ? WORK_AVAILABLE_TIMEOUT : nil
-
-          @not_full.wait @mutex, timeout
+          @not_full.wait @mutex, WORK_AVAILABLE_TIMEOUT
         end
       end
     end
