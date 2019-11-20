@@ -5,6 +5,7 @@
   * Configuration: `environment` is read from `RAILS_ENV`, if `RACK_ENV` can't be found (#2022)
   * `Puma.stats` now returns a Hash instead of a JSON string (#2086)
   * `GC.compact` is called before fork if available (#2093)
+  * Inject small latency to make Puma to prefer workers that are more idle (#2079)
 
 * Bugfixes
   * Your bugfix goes here (#Github Number)
@@ -12,11 +13,6 @@
 
 * Refactor
   * Remove unused loader argument from Plugin initializer (#2095)
-
-## 4.3.1 and 3.12.2 / 2019-12-05
-
-* Security
-  * Fix: a poorly-behaved client could use keepalive requests to monopolize Puma's reactor and create a denial of service attack. CVE-2019-16770.
 
 ## 4.3.1 and 3.12.2 / 2019-12-05
 
