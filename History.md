@@ -1,7 +1,7 @@
 ## Master
 
 * Features
-  * Your feature goes here (#Github Number)
+  * Inject small latency to make Puma to prefer workers that are more idle (#2079)
 
 * Bugfixes
   * Your bugfix goes here (#Github Number)

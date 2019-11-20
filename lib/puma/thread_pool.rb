@@ -75,6 +75,10 @@ module Puma
       @mutex.synchronize { @todo.size }
     end
 
+    def busy
+      spawned - waiting
+    end
+
     def pool_capacity
       waiting + (@max - spawned)
     end
@@ -209,6 +213,22 @@ module Puma
           return busy_threads if @max > busy_threads
 
           @not_full.wait @mutex
+        end
+      end
+    end
+
+    def wait_for_threads_to_finish(tick_time: 0.001, max_wait_ticks: 3)
+      @mutex.synchronize do
+        max_wait_ticks.times do |tick|
+          return if @shutdown
+
+          # if we do wait for more than busy threads
+          # and what is in backlog, stop
+          break if tick >= busy + @todo.size
+
+          # this will be signaled once a request finishes,
+          # which can happen earlier than tick time
+          @not_full.wait @mutex, tick_time
         end
       end
     end
