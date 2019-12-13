@@ -174,6 +174,7 @@ module Puma
         end
 
         @not_empty.signal
+        @not_full.wait @mutex
       end
     end
 
@@ -209,9 +210,15 @@ module Puma
     def wait_until_not_full(sock)
       @mutex.synchronize do
         until @shutdown
-          break if busy.zero? || IO.select([sock], nil, nil, 0)
-          timeout = busy >= @max ? nil : (busy.to_f / @max) * WORK_AVAILABLE_TIMEOUT
-          @not_full.wait @mutex, timeout
+          break if busy.zero?
+          if busy >= @max
+            @not_full.wait @mutex
+          elsif @todo.size > 0
+            Thread.pass
+          else
+            @not_full.wait @mutex, WORK_AVAILABLE_TIMEOUT
+            break
+          end
         end
 
         busy
