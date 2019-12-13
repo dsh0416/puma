@@ -32,6 +32,7 @@ module Puma
     def initialize(min, max, *extra, &block)
       @not_empty = ConditionVariable.new
       @not_full = ConditionVariable.new
+      @spawn = ConditionVariable.new
       @mutex = Mutex.new
 
       @todo = []
@@ -88,6 +89,7 @@ module Puma
 
       th = Thread.new(@spawned) do |spawned|
         Puma.set_thread_name 'threadpool %03i' % spawned
+        spawn_signal = false
         todo  = @todo
         block = @block
         mutex = @mutex
@@ -102,6 +104,11 @@ module Puma
           continue = true
 
           mutex.synchronize do
+            unless spawn_signal
+              @spawn.signal
+              spawn_signal = true
+            end
+
             while todo.empty?
               if @trim_requested > 0
                 @trim_requested -= 1
@@ -142,6 +149,9 @@ module Puma
           @workers.delete th
         end
       end
+
+      # Wait until new thread is spawned.
+      @spawn.wait @mutex
 
       @workers << th
 
@@ -201,13 +211,12 @@ module Puma
         while true
           return if @shutdown
 
-          # If we can still spin up new threads and there
-          # is work queued that cannot be handled by waiting
-          # threads, then accept more work until we would
-          # spin up the max number of threads.
+          # If threads are not at capacity and there
+          # is no work queued that can be handled by waiting
+          # threads, then accept more work.
           busy_threads = @spawned - @waiting + @todo.size
-          return busy_threads if @max > busy_threads
-
+          return busy_threads if busy_threads < @max &&
+            (@todo.empty? || @waiting.zero?)
           @not_full.wait @mutex
         end
       end
