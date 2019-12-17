@@ -5,6 +5,7 @@ require 'puma/util'
 require 'puma/plugin'
 
 require 'time'
+require 'raindrops'
 
 module Puma
   # This class is instantiated by the `Puma::Launcher` and used
@@ -78,12 +79,14 @@ module Puma
         @last_status = '{}'
         @term = false
         @socket = socket
-        @capacity = 0
         @last_request = Time.now
       end
 
       attr_reader :index, :pid, :phase, :signal, :last_checkin, :last_status, :started_at, :last_request
-      attr_accessor :capacity
+
+      def capacity
+        @options[:capacity][index]
+      end
 
       def booted?
         @stage == :booted
@@ -104,7 +107,7 @@ module Puma
       end
 
       def accept(connection)
-        @capacity -= 1
+        @options[:capacity].decr(index)
         @last_request = Time.now
         @socket.send_io(connection)
         connection.close
@@ -282,7 +285,7 @@ module Puma
       @launcher.config.run_hooks :before_worker_boot, index
 
       server = start_server
-      server.update_capacity = Proc.new {|c| @worker_write << "!c#{Process.pid},#{c}\n" }
+      server.update_capacity = Proc.new {|c| @options[:capacity][index] = c; @not_full.signal}
       server.inherit_binder Binder.new(@launcher.events).tap {|b| b.ios << @worker_socket}
 
       Signal.trap "SIGTERM" do
@@ -480,6 +483,7 @@ module Puma
       start_control
 
       @master_read, @worker_write = read, @wakeup
+      @options[:capacity] = Raindrops.new(@options[:workers])
 
       @launcher.config.run_hooks :before_fork, nil
 
@@ -552,9 +556,6 @@ module Puma
                   force_check = true
                 when "p"
                   w.ping!(result.sub(/^\d+/,'').chomp)
-                when "c"
-                  w.capacity = result.sub(/^\d+,/,'').chomp.to_i
-                  @not_full.signal
                 end
               else
                 log "! Out-of-sync worker list, no #{pid} worker"
