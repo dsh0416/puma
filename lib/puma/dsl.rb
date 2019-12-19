@@ -688,6 +688,21 @@ module Puma
       @options[:queue_requests] = answer
     end
 
+    # When set to true, each worker process will bind to a separate TCP port / UNIX socket.
+    #
+    # TCP binds will be created by adding '[index] + 1' to the port number.
+    # Example: bind 'tcp://127.0.0.0:9292' will create worker listeners at 127.0.0.0:9293, 127.0.0.0:9294, etc.
+    #
+    # Unix-socket binds will be created by appending '-[index]' to the specified socket path (ignoring extensions).
+    # Example: bind 'unix:///tmp/puma.sock' will create worker binds at /tmp/puma-0.sock, /tmp/puma-1.sock, etc.
+    #
+    # The default is "false".
+    #
+    # @note Cluster mode only.
+    def bind_per_worker(answer=true)
+      @options[:bind_per_worker] = answer
+    end
+
     # When a shutdown is requested, the backtraces of all the
     # threads will be written to $stdout. This can help figure
     # out why shutdown is hanging.

@@ -272,6 +272,20 @@ module Puma
 
       server = start_server
 
+      if @options[:bind_per_worker]
+        new_binds = @options[:binds].map do |bind|
+          URI.parse(bind).tap do |uri|
+            if uri.port
+              uri.port += (index + 1)
+            else
+              require 'pathname'
+              uri.path = (p = Pathname(uri.path)).sub_ext("-#{index}#{p.extname}").to_s
+            end
+          end.to_s
+        end
+        server.inherit_binder(Binder.new(@launcher.events).tap{|b| b.parse(new_binds, self)})
+      end
+
       Signal.trap "SIGTERM" do
         @worker_write << "e#{Process.pid}\n" rescue nil
         server.stop
