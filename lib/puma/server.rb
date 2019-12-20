@@ -337,6 +337,7 @@ module Puma
 
       @thread_pool.clean_thread_locals = @options[:clean_thread_locals]
       @thread_pool.update_capacity = @update_capacity
+      @thread_pool.update_capacity
 
       if queue_requests
         @reactor = Reactor.new self, @thread_pool
