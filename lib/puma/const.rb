@@ -123,7 +123,7 @@ module Puma
     # we amortize the cost of going back to the reactor for a well behaved
     # but very "greedy" client across 10 requests. This prevents a not
     # well behaved client from monopolizing the thread forever.
-    MAX_FAST_INLINE = 10
+    MAX_FAST_INLINE = 100000
 
     # The original URI requested by the client.
     REQUEST_URI= 'REQUEST_URI'.freeze
