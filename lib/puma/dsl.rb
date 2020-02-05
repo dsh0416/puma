@@ -517,5 +517,22 @@ module Puma
       end
     end
 
+    # Include thread-pool backtraces in runner stats.
+    # This is off by default.
+    #
+    # @example
+    #   thread_backtraces
+    def thread_backtraces(answer=true)
+      @options[:thread_backtraces] = answer
+    end
+
+    # Worker reporting interval in seconds (default 5).
+    #
+    # @note Cluster mode only.
+    # @example
+    #   worker_check_interval 1
+    def worker_check_interval(seconds)
+      @options[:worker_check_interval] = Integer(seconds)
+    end
   end
 end

@@ -184,7 +184,8 @@ module Puma
         :rackup => DefaultRackup,
         :logger => STDOUT,
         :persistent_timeout => Const::PERSISTENT_TIMEOUT,
-        :first_data_timeout => Const::FIRST_DATA_TIMEOUT
+        :first_data_timeout => Const::FIRST_DATA_TIMEOUT,
+        :worker_check_interval => Cluster::WORKER_CHECK_INTERVAL
       }
     end
 

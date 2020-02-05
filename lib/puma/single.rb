@@ -12,11 +12,10 @@ module Puma
   # that this inherits from.
   class Single < Runner
     def stats
-      b = @server.backlog || 0
-      r = @server.running || 0
-      t = @server.pool_capacity || 0
-      m = @server.max_threads || 0
-      %Q!{ "backlog": #{b}, "running": #{r}, "pool_capacity": #{t}, "max_threads": #{m} }!
+      stats = @server.stats
+      stats[:started_at] = @started_at.utc.iso8601
+      stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+      stats
     end
 
     def restart

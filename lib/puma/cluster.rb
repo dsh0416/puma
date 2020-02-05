@@ -3,6 +3,7 @@ require 'puma/util'
 require 'puma/plugin'
 
 require 'time'
+require 'json'
 
 module Puma
   # This class is instantiated by the `Puma::Launcher` and used
@@ -93,7 +94,7 @@ module Puma
 
       def ping!(status)
         @last_checkin = Time.now
-        @last_status = status
+        @last_status = JSON.parse(status)
       end
 
       def ping_timeout?(which)
@@ -181,7 +182,7 @@ module Puma
     def check_workers(force=false)
       return if !force && @next_check && @next_check >= Time.now
 
-      @next_check = Time.now + WORKER_CHECK_INTERVAL
+      @next_check = Time.now + @options[:worker_check_interval]
 
       any = false
 
@@ -288,13 +289,11 @@ module Puma
         base_payload = "p#{Process.pid}"
 
         while true
-          sleep WORKER_CHECK_INTERVAL
+          sleep @options[:worker_check_interval]
           begin
-            b = server.backlog || 0
-            r = server.running || 0
-            t = server.pool_capacity || 0
-            m = server.max_threads || 0
-            payload = %Q!#{base_payload}{ "backlog":#{b}, "running":#{r}, "pool_capacity":#{t}, "max_threads": #{m} }\n!
+            stats = server.stats
+            stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+            payload = %Q!#{base_payload}#{stats.to_json}\n!
             io << payload
           rescue IOError
             Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
@@ -485,7 +484,7 @@ module Puma
 
             force_check = false
 
-            res = IO.select([read], nil, nil, WORKER_CHECK_INTERVAL)
+            res = IO.select([read], nil, nil, @options[:worker_check_interval])
 
             if res
               req = read.read_nonblock(1)

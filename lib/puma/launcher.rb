@@ -212,6 +212,25 @@ module Puma
       end
     end
 
+    def thread_status
+      Thread.list.each do |thread|
+        name = "Thread: TID-#{thread.object_id.to_s(36)}"
+        name += " #{thread['label']}" if thread['label']
+        name += " #{thread.name}" if thread.respond_to?(:name) && thread.name
+        backtrace = thread.backtrace || ["<no backtrace available>"]
+
+        yield name, backtrace
+      end
+    end
+
+    # Return backtraces of all non-idle threads in the thread-pool.
+    def thread_pool_status
+      to_enum(:thread_status).
+        to_h.
+        select {|name, _| name.match?(/threadpool \d{3}/)}.
+        reject {|_, backtrace| backtrace.first.match?(/thread_pool\.rb.*sleep/)}
+    end
+
     private
 
     def reload_worker_directory
