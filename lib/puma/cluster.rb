@@ -5,6 +5,7 @@ require 'puma/util'
 require 'puma/plugin'
 
 require 'time'
+require 'json'
 
 module Puma
   # This class is instantiated by the `Puma::Launcher` and used
@@ -94,11 +95,7 @@ module Puma
 
       def ping!(status)
         @last_checkin = Time.now
-        captures = status.match(/{ "backlog":(?<backlog>\d*), "running":(?<running>\d*), "pool_capacity":(?<pool_capacity>\d*), "max_threads": (?<max_threads>\d*) }/)
-        @last_status = captures.names.inject({}) do |hash, key|
-          hash[key.to_sym] = captures[key].to_i
-          hash
-        end
+        @last_status = JSON.parse(status)
       end
 
       def ping_timeout?(which)
@@ -186,7 +183,7 @@ module Puma
     def check_workers(force=false)
       return if !force && @next_check && @next_check >= Time.now
 
-      @next_check = Time.now + Const::WORKER_CHECK_INTERVAL
+      @next_check = Time.now + @options[:worker_check_interval]
 
       any = false
 
@@ -290,13 +287,11 @@ module Puma
         base_payload = "p#{Process.pid}"
 
         while true
-          sleep Const::WORKER_CHECK_INTERVAL
+          sleep @options[:worker_check_interval]
           begin
-            b = server.backlog || 0
-            r = server.running || 0
-            t = server.pool_capacity || 0
-            m = server.max_threads || 0
-            payload = %Q!#{base_payload}{ "backlog":#{b}, "running":#{r}, "pool_capacity":#{t}, "max_threads": #{m} }\n!
+            stats = server.stats
+            stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+            payload = %Q!#{base_payload}#{stats.to_json}\n!
             io << payload
           rescue IOError
             Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
@@ -510,7 +505,7 @@ module Puma
 
             force_check = false
 
-            res = IO.select([read], nil, nil, Const::WORKER_CHECK_INTERVAL)
+            res = IO.select([read], nil, nil, @options[:worker_check_interval])
 
             if res
               req = read.read_nonblock(1)

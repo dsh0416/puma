@@ -644,7 +644,7 @@ module Puma
     #   worker_timeout 60
     def worker_timeout(timeout)
       timeout = Integer(timeout)
-      min = Const::WORKER_CHECK_INTERVAL
+      min = @options[:worker_check_interval]
 
       if timeout <= min
         raise "The minimum worker_timeout must be greater than the worker reporting interval (#{min})"
@@ -736,5 +736,22 @@ module Puma
       end
     end
 
+    # Include thread-pool backtraces in runner stats.
+    # This is off by default.
+    #
+    # @example
+    #   thread_backtraces
+    def thread_backtraces(answer=true)
+      @options[:thread_backtraces] = answer
+    end
+
+    # Worker reporting interval in seconds (default 5).
+    #
+    # @note Cluster mode only.
+    # @example
+    #   worker_check_interval 1
+    def worker_check_interval(seconds)
+      @options[:worker_check_interval] = Integer(seconds)
+    end
   end
 end

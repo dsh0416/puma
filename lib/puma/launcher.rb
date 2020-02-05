@@ -216,6 +216,14 @@ module Puma
       end
     end
 
+    # Return backtraces of all non-idle threads in the thread-pool.
+    def thread_pool_status
+      to_enum(:thread_status).
+        to_h.
+        select {|name, _| name.match?(/threadpool \d{3}/)}.
+        reject {|_, backtrace| backtrace.first.match?(/thread_pool\.rb.*sleep/)}
+    end
+
     private
 
     # If configured, write the pid of the current process out
