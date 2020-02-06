@@ -745,6 +745,15 @@ module Puma
       @options[:thread_backtraces] = answer
     end
 
+    # Include garbage collection statistics in runner stats.
+    # This is off by default.
+    #
+    # @example
+    #   gc_stats
+    def gc_stats(answer=true)
+      @options[:gc_stats] = answer
+    end
+
     # Worker reporting interval in seconds (default 5).
     #
     # @note Cluster mode only.
