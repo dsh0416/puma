@@ -293,6 +293,7 @@ module Puma
           begin
             stats = server.stats
             stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+            stats[:gc] = GC.stat if @options[:gc_stats]
             payload = %Q!#{base_payload}#{stats.to_json}\n!
             io << payload
           rescue IOError
