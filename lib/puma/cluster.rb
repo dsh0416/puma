@@ -78,6 +78,7 @@ module Puma
       end
 
       attr_reader :index, :pid, :phase, :signal, :last_checkin, :last_status, :started_at
+      attr_writer :pid
 
       def booted?
         @stage == :booted
@@ -139,11 +140,11 @@ module Puma
         idx = next_worker_index
         @launcher.config.run_hooks :before_worker_fork, idx
 
-        pid = fork { worker(idx, master) }
-        if !pid
-          log "! Complete inability to spawn new workers detected"
-          log "! Seppuku is the only choice."
-          exit! 1
+        if @options[:fork_worker] && @workers.find {|x| x.index == 0}
+          @fork_writer << "#{idx}\n"
+          pid = nil
+        else
+          pid = spawn_worker(idx, master)
         end
 
         debug "Spawned worker: #{pid}"
@@ -155,6 +156,16 @@ module Puma
       if diff > 0
         @phased_state = :idle
       end
+    end
+
+    def spawn_worker(idx, master)
+      pid = fork { worker(idx, master) }
+      if !pid
+        log "! Complete inability to spawn new workers detected"
+        log "! Seppuku is the only choice."
+        exit! 1
+      end
+      pid
     end
 
     def cull_workers
@@ -212,7 +223,9 @@ module Puma
         # we need to phase any workers out (which will restart
         # in the right phase).
         #
-        w = @workers.find { |x| x.phase != @phase }
+        w = @workers.
+          reject { |x| @options[:fork_worker] && x.index == 0 }.
+          find { |x| x.phase != @phase }
 
         if w
           if @phased_state == :idle
@@ -248,10 +261,19 @@ module Puma
       @workers = []
       @master_read.close
       @suicide_pipe.close
+      @fork_writer.close
 
       Thread.new do
         Puma.set_thread_name "worker check pipe"
-        IO.select [@check_pipe]
+        if index == 0
+          while (idx = @fork_pipe.gets)
+            pid = spawn_worker(idx.to_i, master)
+            Process.detach(pid)
+            @worker_write << "f#{pid}:#{idx}" rescue nil
+          end
+        else
+          IO.select [@check_pipe]
+        end
         log "! Detected parent died, dying"
         exit! 1
       end
@@ -278,7 +300,7 @@ module Puma
       end
 
       begin
-        @worker_write << "b#{Process.pid}\n"
+        @worker_write << "b#{Process.pid}:#{index}\n"
       rescue SystemCallError, IOError
         Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
         STDERR.puts "Master seems to have exited, exiting."
@@ -321,7 +343,7 @@ module Puma
     end
 
     def phased_restart
-      return false if @options[:preload_app]
+      return false if @options[:preload_app] && !@options[:fork_worker]
 
       @phased_restart = true
       wakeup!
@@ -468,6 +490,10 @@ module Puma
       #
       @check_pipe, @suicide_pipe = Puma::Util.pipe
 
+      # Separate pipe used by worker 0 to receive commands to
+      # fork new worker processes.
+      @fork_pipe, @fork_writer = Puma::Util.pipe
+
       if daemon?
         log "* Daemonizing..."
         Process.daemon(true)
@@ -520,6 +546,12 @@ module Puma
               result = read.gets
               pid = result.to_i
 
+              if req == "b" || req == "f"
+                pid, idx = result.split(':').map(&:to_i)
+                w = @workers.find {|x| x.index == idx}
+                w.pid = pid if w.pid.nil?
+              end
+
               if w = @workers.find { |x| x.pid == pid }
                 case req
                 when "b"
@@ -560,6 +592,7 @@ module Puma
     # `#term` if needed
     def wait_workers
       @workers.reject! do |w|
+        return false if w.pid.nil?
         begin
           if Process.wait(w.pid, Process::WNOHANG)
             true
@@ -568,7 +601,12 @@ module Puma
             nil
           end
         rescue Errno::ECHILD
-          true # child is already terminated
+          begin
+            Process.kill(0, w.pid)
+            false # child still alive, but has another parent
+          rescue Errno::ESRCH, Errno::EPERM
+            true # child is already terminated
+          end
         end
       end
     end

@@ -736,5 +736,15 @@ module Puma
       end
     end
 
+    # When set, new workers will be forked from worker 0 directly.
+    # This can be used to optimize copy-on-write performance for running apps.
+    #
+    # This also prevents phased restart from restarting worker 0, so
+    # phased restart can be used to improve memory usage on a running app.
+    #
+    # @note Cluster mode only.
+    def fork_worker(answer=true)
+      @options[:fork_worker] = answer
+    end
   end
 end
