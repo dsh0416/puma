@@ -227,7 +227,7 @@ module Puma
     def thread_pool_status
       to_enum(:thread_status).
         to_h.
-        select {|name, _| name.match?(/threadpool \d{3}/)}.
+        select {|name, _| name.match?(/puma \d{3}/)}.
         reject {|_, backtrace| backtrace.first.match?(/thread_pool\.rb.*sleep/)}
     end
 
