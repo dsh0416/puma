@@ -19,6 +19,7 @@
   * Remove unused loader argument from Plugin initializer (#2095)
   * Simplify `Configuration.random_token` and remove insecure fallback (#2102)
   * Simplify `Runner#start_control` URL parsing (#2111)
+  * JSON parse cluster worker stats instead of regex (#2124)
 
 ## 4.3.1 and 3.12.2 / 2019-12-05
 

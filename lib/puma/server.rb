@@ -1045,5 +1045,10 @@ module Puma
     def shutting_down?
       @status == :stop || @status == :restart
     end
+
+    def stats
+      stat_names = %i(backlog running pool_capacity max_threads requests_count)
+      stat_names.map {|name| [name, send(name) || 0]}.to_h
+    end
   end
 end
