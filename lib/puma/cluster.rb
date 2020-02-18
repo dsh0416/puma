@@ -94,7 +94,7 @@ module Puma
 
       def ping!(status)
         @last_checkin = Time.now
-        @last_status = JSON.parse(status)
+        @last_status = status
       end
 
       def ping_timeout?(which)
