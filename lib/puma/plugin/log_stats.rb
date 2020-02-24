@@ -16,21 +16,25 @@ module LogStats
     def start(launcher)
       in_background do
         loop do
-          sleep launcher.options[:worker_check_interval]
-          min = LogStats.threshold
-          min = min.call if min.is_a?(Proc)
-          if min
-            stats = launcher.stats
-            stats = JSON.parse(stats, symbolize_names: true) if stats.is_a?(String)
-            total = if stats[:worker_status]
-              stats[:worker_status].map {|w| pending(w[:last_status])}.inject(&:+)
-            else
-              pending(stats)
+          begin
+            sleep launcher.options[:worker_check_interval]
+            min = LogStats.threshold
+            min = min.call if min.is_a?(Proc)
+            if min
+              stats = launcher.stats
+              stats = JSON.parse(stats, symbolize_names: true) if stats.is_a?(String)
+              total = if stats[:worker_status]
+                stats[:worker_status].map {|w| pending(w[:last_status])}.inject(&:+)
+              else
+                pending(stats)
+              end
+              if total >= min
+                stats[:total] = total
+                launcher.events.log stats.to_json
+              end
             end
-            if total >= min
-              stats[:total] = total
-              launcher.events.log stats.to_json
-            end
+          rescue => e
+            launcher.events.log "LogStats failed: #{e}\n  #{e.backtrace.join("\n    ")}"
           end
         end
       end
