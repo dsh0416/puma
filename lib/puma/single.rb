@@ -1,6 +1,7 @@
 require 'puma/runner'
 require 'puma/detect'
 require 'puma/plugin'
+require 'json'
 
 module Puma
   # This class is instantiated by the `Puma::Launcher` and used
@@ -13,10 +14,9 @@ module Puma
   class Single < Runner
     def stats
       stats = @server.stats
-      stats[:started_at] = @started_at.utc.iso8601
       stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
       stats[:gc] = GC.stat if @options[:gc_stats]
-      stats
+      stats.to_json
     end
 
     def restart
