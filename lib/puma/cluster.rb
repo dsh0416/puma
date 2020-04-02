@@ -64,7 +64,7 @@ module Puma
     end
 
     class Worker
-      def initialize(idx, pid, phase, options)
+      def initialize(idx, pid, phase, options, read)
         @index = idx
         @pid = pid
         @phase = phase
@@ -76,9 +76,10 @@ module Puma
         @last_checkin = Time.now
         @last_status = {}
         @term = false
+        @read = read
       end
 
-      attr_reader :index, :pid, :phase, :signal, :last_checkin, :last_status, :started_at
+      attr_reader :index, :pid, :phase, :signal, :last_checkin, :last_status, :started_at, :read
 
       def booted?
         @stage == :booted
@@ -135,8 +136,9 @@ module Puma
       diff.times do
         idx = next_worker_index
         @launcher.config.run_hooks :before_worker_fork, idx
+        read, write = Puma::Util.pipe
 
-        pid = fork { worker(idx, master) }
+        pid = fork { worker(idx, master, write) }
         if !pid
           log "! Complete inability to spawn new workers detected"
           log "! Seppuku is the only choice."
@@ -144,7 +146,7 @@ module Puma
         end
 
         debug "Spawned worker: #{pid}"
-        @workers << Worker.new(idx, pid, @phase, @options)
+        @workers << Worker.new(idx, pid, @phase, @options, read)
 
         @launcher.config.run_hooks :after_worker_fork, idx
       end
@@ -235,7 +237,7 @@ module Puma
       end
     end
 
-    def worker(index, master)
+    def worker(index, master, worker_write)
       title  = "puma: cluster worker #{index}: #{master}"
       title += " [#{@options[:tag]}]" if @options[:tag] && !@options[:tag].empty?
       $0 = title
@@ -243,7 +245,6 @@ module Puma
       Signal.trap "SIGINT", "IGNORE"
 
       @workers = []
-      @master_read.close
       @suicide_pipe.close
 
       Thread.new do
@@ -270,19 +271,19 @@ module Puma
       server = start_server
 
       Signal.trap "SIGTERM" do
-        @worker_write << "e#{Process.pid}\n" rescue nil
+        worker_write << "e#{Process.pid}\n" rescue nil
         server.stop
       end
 
       begin
-        @worker_write << "b#{Process.pid}\n"
+        worker_write << "b#{Process.pid}\n"
       rescue SystemCallError, IOError
         Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
         STDERR.puts "Master seems to have exited, exiting."
         return
       end
 
-      Thread.new(@worker_write) do |io|
+      Thread.new(worker_write) do |io|
         Puma.set_thread_name "stat payload"
 
         while true
@@ -305,8 +306,8 @@ module Puma
       # exiting until any background operations are completed
       @launcher.config.run_hooks :before_worker_shutdown, index
     ensure
-      @worker_write << "t#{Process.pid}\n" rescue nil
-      @worker_write.close
+      worker_write << "t#{Process.pid}\n" rescue nil
+      worker_write.close
     end
 
     def restart
@@ -451,7 +452,7 @@ module Puma
         @launcher.binder.parse @options[:binds], self
       end
 
-      read, @wakeup = Puma::Util.pipe
+      master_read, @wakeup = Puma::Util.pipe
 
       setup_signals
 
@@ -476,8 +477,6 @@ module Puma
       @launcher.write_state
 
       start_control
-
-      @master_read, @worker_write = read, @wakeup
 
       @launcher.config.run_hooks :before_fork, nil
       GC.compact if GC.respond_to?(:compact)
@@ -504,9 +503,9 @@ module Puma
 
             force_check = false
 
-            res = IO.select([read], nil, nil, @options[:worker_check_interval])
+            read_ios, _ = IO.select([master_read] + @workers.map(&:read), nil, nil, @options[:worker_check_interval])
 
-            if res
+            (read_ios || []).each do |read|
               req = read.read_nonblock(1)
 
               next if !req || req == "!"
@@ -543,7 +542,7 @@ module Puma
       ensure
         @check_pipe.close
         @suicide_pipe.close
-        read.close
+        master_read.close
         @wakeup.close
       end
     end
