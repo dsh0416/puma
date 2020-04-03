@@ -24,7 +24,7 @@ module LogStats
               stats = launcher.stats
               stats = JSON.parse(stats, symbolize_names: true) if stats.is_a?(String)
               total = if stats[:worker_status]
-                stats[:worker_status].map {|w| pending(w[:last_status])}.inject(&:+)
+                stats[:worker_status].map {|w| pending(w[:last_status])}.inject(&:+) || 0
               else
                 pending(stats)
               end

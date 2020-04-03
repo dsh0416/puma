@@ -1,6 +1,7 @@
 require 'puma/rack/builder'
 require 'puma/plugin'
 require 'puma/const'
+require 'puma/cluster'
 
 module Puma
 
