@@ -541,7 +541,7 @@ module Puma
     # @example
     #   worker_check_interval 1
     def worker_check_interval(seconds)
-      @options[:worker_check_interval] = Integer(seconds)
+      @options[:worker_check_interval] = Float(seconds)
     end
   end
 end
