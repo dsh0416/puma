@@ -79,6 +79,10 @@ module Puma
       waiting + (@max - spawned)
     end
 
+    def busy_threads
+      @spawned - @waiting + @todo.size
+    end
+
     # :nodoc:
     #
     # Must be called with @mutex held!
@@ -205,8 +209,7 @@ module Puma
           # is work queued that cannot be handled by waiting
           # threads, then accept more work until we would
           # spin up the max number of threads.
-          busy_threads = @spawned - @waiting + @todo.size
-          return busy_threads if @max > busy_threads
+          return if busy_threads < @max
 
           @not_full.wait @mutex
         end
