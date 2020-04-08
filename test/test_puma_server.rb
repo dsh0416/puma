@@ -921,4 +921,34 @@ EOF
     assert_equal ["HTTP/1.0 200 OK", "Content-Length: 0"], header(sock)
     sock.close
   end
+
+  def oob_server
+    @oob_count = 0
+    oob = -> {@oob_count += 1}
+    @server = Puma::Server.new @app, @events, out_of_band: [oob], queue_requests: false
+    @server.min_threads = 50
+    @server.max_threads = 50
+    server_run app: ->(_) { sleep 0.01; [200, {}, [""]] }
+  end
+
+  # Sequential requests should trigger out_of_band hooks after every request.
+  def test_out_of_band
+    n = 100
+    oob_server
+    n.times {send_http_and_read "HEAD / HTTP/1.0\r\n\r\n"}
+    sleep 0.1
+    # Allow a small delta, since timing blips can sometimes trigger a few hooks to fail to fire.
+    assert_in_delta n, @oob_count, 2
+  end
+
+  # Parallel requests should trigger out_of_band hooks only once after the final request.
+  def test_out_of_band_parallel
+    n = 100
+    oob_server
+    threads = Array.new(n) {Thread.new {send_http_and_read "HEAD / HTTP/1.0\r\n\r\n"}}
+    threads.map(&:join)
+    sleep 0.1
+    # Allow a small delta, since timing blips can sometimes trigger a few extra hooks to fire.
+    assert_in_delta 1, @oob_count, 5
+  end
 end

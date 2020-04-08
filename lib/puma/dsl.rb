@@ -494,8 +494,9 @@ module Puma
 
     # Code to run out-of-band when the worker is idle.
     # These hooks run immediately after a request has finished
-    # processing and there are no busy threads on the worker.
-    # The worker doesn't accept new requests until this code finishes.
+    # processing and there are no other busy threads on the worker.
+    # The worker may accept new requests to process in another thread
+    # while this code is still running.
     #
     # This hook is useful for running out-of-band garbage collection
     # or scheduling asynchronous tasks to execute after a response.
