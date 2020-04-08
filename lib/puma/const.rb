@@ -100,7 +100,7 @@ module Puma
   # too taxing on performance.
   module Const
 
-    PUMA_VERSION = VERSION = "4.3.1".freeze
+    PUMA_VERSION = VERSION = "4.3.3".freeze
     CODE_NAME = "Mysterious Traveller".freeze
     PUMA_SERVER_STRING = ['puma', PUMA_VERSION, CODE_NAME].join(' ').freeze
 
@@ -175,7 +175,6 @@ module Puma
     PORT_443 = "443".freeze
     LOCALHOST = "localhost".freeze
     LOCALHOST_IP = "127.0.0.1".freeze
-    LOCALHOST_ADDR = "127.0.0.1:0".freeze
 
     SERVER_PROTOCOL = "SERVER_PROTOCOL".freeze
     HTTP_11 = "HTTP/1.1".freeze
@@ -228,6 +227,7 @@ module Puma
     COLON = ": ".freeze
 
     NEWLINE = "\n".freeze
+    HTTP_INJECTION_REGEX = /[\r\n]/.freeze
 
     HIJACK_P = "rack.hijack?".freeze
     HIJACK = "rack.hijack".freeze

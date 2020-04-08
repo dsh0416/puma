@@ -135,7 +135,7 @@ module Puma
 
       diff.times do
         idx = next_worker_index
-        @launcher.config.run_hooks :before_worker_fork, idx
+        @launcher.config.run_hooks :before_worker_fork, idx, @launcher.events
         read, write = Puma::Util.pipe
 
         pid = fork { worker(idx, master, write) }
@@ -148,7 +148,7 @@ module Puma
         debug "Spawned worker: #{pid}"
         @workers << Worker.new(idx, pid, @phase, @options, read)
 
-        @launcher.config.run_hooks :after_worker_fork, idx
+        @launcher.config.run_hooks :after_worker_fork, idx, @launcher.events
       end
 
       if diff > 0
@@ -266,7 +266,7 @@ module Puma
 
       # Invoke any worker boot hooks so they can get
       # things in shape before booting the app.
-      @launcher.config.run_hooks :before_worker_boot, index
+      @launcher.config.run_hooks :before_worker_boot, index, @launcher.events
 
       server = start_server
 
@@ -304,7 +304,7 @@ module Puma
 
       # Invoke any worker shutdown hooks so they can prevent the worker
       # exiting until any background operations are completed
-      @launcher.config.run_hooks :before_worker_shutdown, index
+      @launcher.config.run_hooks :before_worker_shutdown, index, @launcher.events
     ensure
       worker_write << "t#{Process.pid}\n" rescue nil
       worker_write.close
@@ -463,12 +463,7 @@ module Puma
       #
       @check_pipe, @suicide_pipe = Puma::Util.pipe
 
-      if daemon?
-        log "* Daemonizing..."
-        Process.daemon(true)
-      else
-        log "Use Ctrl-C to stop"
-      end
+      log "Use Ctrl-C to stop"
 
       redirect_io
 
@@ -478,7 +473,7 @@ module Puma
 
       start_control
 
-      @launcher.config.run_hooks :before_fork, nil
+      @launcher.config.run_hooks :before_fork, nil, @launcher.events
       GC.compact if GC.respond_to?(:compact)
 
       spawn_workers

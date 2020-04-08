@@ -1,6 +1,8 @@
 require_relative "helper"
 require "puma/minissl"
 require "puma/puma_http11"
+require "puma/events"
+require "net/http"
 
 #———————————————————————————————————————————————————————————————————————————————
 #             NOTE: ALL TESTS BYPASSED IF DISABLE_SSL IS TRUE
@@ -21,7 +23,7 @@ DISABLE_SSL = begin
               Puma::MiniSSL.check
               # net/http (loaded in helper) does not necessarily load OpenSSL
               require "openssl" unless Object.const_defined? :OpenSSL
-              puts "", RUBY_DESCRIPTION,
+              puts "", RUBY_DESCRIPTION, "RUBYOPT: #{ENV['RUBYOPT']}",
                    "                         Puma::MiniSSL                   OpenSSL",
                    "OPENSSL_LIBRARY_VERSION: #{Puma::MiniSSL::OPENSSL_LIBRARY_VERSION.ljust 32}#{OpenSSL::OPENSSL_LIBRARY_VERSION}",
                    "        OPENSSL_VERSION: #{Puma::MiniSSL::OPENSSL_VERSION.ljust 32}#{OpenSSL::OPENSSL_VERSION}", ""
@@ -45,7 +47,7 @@ class TestPumaServerSSL < Minitest::Test
 
   # yields ctx to block, use for ctx setup & configuration
   def start_server
-    @port = UniquePort.call
+    @port = 0
     @host = "127.0.0.1"
 
     app = lambda { |env| [200, {}, [env['rack.url_scheme']]] }
@@ -69,7 +71,7 @@ class TestPumaServerSSL < Minitest::Test
     @ssl_listener = @server.add_ssl_listener @host, @port, ctx
     @server.run
 
-    @http = Net::HTTP.new @host, @port
+    @http = Net::HTTP.new @host, @server.connected_ports[0]
     @http.use_ssl = true
     @http.verify_mode = OpenSSL::SSL::VERIFY_NONE
   end
@@ -93,7 +95,8 @@ class TestPumaServerSSL < Minitest::Test
     # Open a connection and give enough data to trigger a read, then wait
     ctx = OpenSSL::SSL::SSLContext.new
     ctx.verify_mode = OpenSSL::SSL::VERIFY_NONE
-    socket = OpenSSL::SSL::SSLSocket.new TCPSocket.new(@host, @port), ctx
+    port = @server.connected_ports[0]
+    socket = OpenSSL::SSL::SSLSocket.new TCPSocket.new(@host, port), ctx
     socket.write "x"
     sleep 0.1
 
@@ -163,7 +166,7 @@ class TestPumaServerSSL < Minitest::Test
     skip("TLSv1 protocol is unavailable") if Puma::MiniSSL::OPENSSL_NO_TLS1
     start_server { |ctx| ctx.no_tlsv1 = true }
 
-    if @http.respond_to? :max_version=
+    if OpenSSL::SSL::SSLContext.private_instance_methods(false).include?(:set_minmax_proto_version)
       @http.max_version = :TLS1
     else
       @http.ssl_version = :TLSv1
@@ -183,7 +186,7 @@ class TestPumaServerSSL < Minitest::Test
   def test_tls_v1_1_rejection
     start_server { |ctx| ctx.no_tlsv1_1 = true }
 
-    if @http.respond_to? :max_version=
+    if OpenSSL::SSL::SSLContext.private_instance_methods(false).include?(:set_minmax_proto_version)
       @http.max_version = :TLS1_1
     else
       @http.ssl_version = :TLSv1_1
@@ -206,7 +209,7 @@ class TestPumaServerSSLClient < Minitest::Test
   parallelize_me!
   def assert_ssl_client_error_match(error, subject=nil, &blk)
     host = "127.0.0.1"
-    port = UniquePort.call
+    port = 0
 
     app = lambda { |env| [200, {}, [env['rack.url_scheme']]] }
 
@@ -226,7 +229,7 @@ class TestPumaServerSSLClient < Minitest::Test
     server.add_ssl_listener host, port, ctx
     server.run
 
-    http = Net::HTTP.new host, port
+    http = Net::HTTP.new host, server.connected_ports[0]
     http.use_ssl = true
     http.verify_mode = OpenSSL::SSL::VERIFY_NONE
 

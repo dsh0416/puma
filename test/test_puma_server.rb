@@ -1,4 +1,6 @@
 require_relative "helper"
+require "puma/events"
+require "net/http"
 
 class TestPumaServer < Minitest::Test
   parallelize_me!
@@ -39,14 +41,16 @@ class TestPumaServer < Minitest::Test
   end
 
   def send_http_and_read(req)
-    sock = TCPSocket.new @host, @server.connected_port
+    port = @server.connected_ports[0]
+    sock = TCPSocket.new @host, port
     @ios << sock
     sock << req
     sock.read
   end
 
   def send_http(req)
-    sock = TCPSocket.new @host, @server.connected_port
+    port = @server.connected_ports[0]
+    sock = TCPSocket.new @host, port
     @ios << sock
     sock << req
     sock
@@ -137,7 +141,8 @@ class TestPumaServer < Minitest::Test
     req = Net::HTTP::Get.new '/'
     req['HOST'] = 'example.com'
 
-    res = Net::HTTP.start @host, @server.connected_port do |http|
+    port = @server.connected_ports[0]
+    res = Net::HTTP.start @host, port do |http|
       http.request(req)
     end
 
@@ -153,7 +158,8 @@ class TestPumaServer < Minitest::Test
     req['HOST'] = "example.com"
     req['X_FORWARDED_PROTO'] = "https,http"
 
-    res = Net::HTTP.start @host, @server.connected_port do |http|
+    port = @server.connected_ports[0]
+    res = Net::HTTP.start @host, port do |http|
       http.request(req)
     end
 
@@ -257,6 +263,36 @@ EOF
     assert_match(/HTTP\/1.0 500 Internal Server Error/, data)
   end
 
+  def test_force_shutdown_custom_error_message
+    handler = lambda {|err, env, status| [500, {"Content-Type" => "application/json"}, ["{}\n"]]}
+    @server = Puma::Server.new @app, @events, {:lowlevel_error_handler => handler, :force_shutdown_after => 2}
+
+    server_run app: ->(env) do
+      @server.stop
+      sleep 5
+    end
+
+    data = send_http_and_read "GET / HTTP/1.0\r\n\r\n"
+
+    assert_match(/HTTP\/1.0 500 Internal Server Error/, data)
+    assert_match(/Content-Type: application\/json/, data)
+    assert_match(/{}\n$/, data)
+  end
+
+  def test_force_shutdown_error_default
+    @server = Puma::Server.new @app, @events, {:force_shutdown_after => 2}
+
+    server_run app: ->(env) do
+      @server.stop
+      sleep 5
+    end
+
+    data = send_http_and_read "GET / HTTP/1.0\r\n\r\n"
+
+    assert_match(/HTTP\/1.0 503 Service Unavailable/, data)
+    assert_match(/Puma caught this error.+Puma::ThreadPool::ForceShutdown/, data)
+  end
+
   def test_prints_custom_error
     re = lambda { |err| [302, {'Content-Type' => 'text', 'Location' => 'foo.html'}, ['302 found']] }
     @server = Puma::Server.new @app, @events, {:lowlevel_error_handler => re}
@@ -271,6 +307,21 @@ EOF
   def test_leh_gets_env_as_well
     re = lambda { |err,env|
       env['REQUEST_PATH'] || raise('where is env?')
+      [302, {'Content-Type' => 'text', 'Location' => 'foo.html'}, ['302 found']]
+    }
+
+    @server = Puma::Server.new @app, @events, {:lowlevel_error_handler => re}
+
+    server_run app: ->(env) { raise "don't leak me bro" }
+
+    data = send_http_and_read "GET / HTTP/1.0\r\n\r\n"
+
+    assert_match(/HTTP\/1.0 302 Found/, data)
+  end
+
+  def test_leh_has_status
+    re = lambda { |err, env, status|
+      raise "Cannot find status" unless status
       [302, {'Content-Type' => 'text', 'Location' => 'foo.html'}, ['302 found']]
     }
 
@@ -745,7 +796,7 @@ EOF
     }
 
     sock = send_http "GET / HTTP/1.1\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nh\r\n"
-    sleep 1
+    sleep 3
     sock << "4\r\nello\r\n0\r\n\r\n"
 
     sock.gets
@@ -766,5 +817,108 @@ EOF
   def test_open_connection_wait_no_queue
     @server = Puma::Server.new @app, @events, queue_requests: false
     test_open_connection_wait
+  end
+
+  # Rack may pass a newline in a header expecting us to split it.
+  def test_newline_splits
+    server_run app: ->(_) { [200, {'X-header' => "first line\nsecond line"}, ["Hello"]] }
+
+    data = send_http_and_read "HEAD / HTTP/1.0\r\n\r\n"
+
+    assert_match "X-header: first line\r\nX-header: second line\r\n", data
+  end
+
+  def test_newline_splits_in_early_hint
+    server_run early_hints: true, app: ->(env) do
+      env['rack.early_hints'].call({'X-header' => "first line\nsecond line"})
+      [200, {}, ["Hello world!"]]
+    end
+
+    data = send_http_and_read "HEAD / HTTP/1.0\r\n\r\n"
+
+    assert_match "X-header: first line\r\nX-header: second line\r\n", data
+  end
+
+  # To comply with the Rack spec, we have to split header field values
+  # containing newlines into multiple headers.
+  def assert_does_not_allow_http_injection(app, opts = {})
+    server_run(early_hints: opts[:early_hints], app: app)
+
+    data = send_http_and_read "HEAD / HTTP/1.0\r\n\r\n"
+
+    refute_match(/[\r\n]Cookie: hack[\r\n]/, data)
+  end
+
+  # HTTP Injection Tests
+  #
+  # Puma should prevent injection of CR and LF characters into headers, either as
+  # CRLF or CR or LF, because browsers may interpret it at as a line end and
+  # allow untrusted input in the header to split the header or start the
+  # response body. While it's not documented anywhere and they shouldn't be doing
+  # it, Chrome and curl recognize a lone CR as a line end. According to RFC,
+  # clients SHOULD interpret LF as a line end for robustness, and CRLF is the
+  # specced line end.
+  #
+  # There are three different tests because there are three ways to set header
+  # content in Puma. Regular (rack env), early hints, and a special case for
+  # overriding content-length.
+  {"cr" => "\r", "lf" => "\n", "crlf" => "\r\n"}.each do |suffix, line_ending|
+    # The cr-only case for the following test was CVE-2020-5247
+    define_method("test_prevent_response_splitting_headers_#{suffix}") do
+      app = ->(_) { [200, {'X-header' => "untrusted input#{line_ending}Cookie: hack"}, ["Hello"]] }
+      assert_does_not_allow_http_injection(app)
+    end
+
+    define_method("test_prevent_response_splitting_headers_early_hint_#{suffix}") do
+      app = ->(env) do
+        env['rack.early_hints'].call("X-header" => "untrusted input#{line_ending}Cookie: hack")
+        [200, {}, ["Hello"]]
+      end
+      assert_does_not_allow_http_injection(app, early_hints: true)
+    end
+
+    define_method("test_prevent_content_length_injection_#{suffix}") do
+      app = ->(_) { [200, {'content-length' => "untrusted input#{line_ending}Cookie: hack"}, ["Hello"]] }
+      assert_does_not_allow_http_injection(app)
+    end
+  end
+
+  def test_http11_connection_header_queue
+    server_run app: ->(_) { [200, {}, [""]] }
+
+    sock = send_http "GET / HTTP/1.1\r\n\r\n"
+    assert_equal ["HTTP/1.1 200 OK", "Content-Length: 0"], header(sock)
+
+    sock << "GET / HTTP/1.1\r\nConnection: close\r\n\r\n"
+    assert_equal ["HTTP/1.1 200 OK", "Connection: close", "Content-Length: 0"], header(sock)
+
+    sock.close
+  end
+
+  def test_http10_connection_header_queue
+    server_run app: ->(_) { [200, {}, [""]] }
+
+    sock = send_http "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+    assert_equal ["HTTP/1.0 200 OK", "Connection: Keep-Alive", "Content-Length: 0"], header(sock)
+
+    sock << "GET / HTTP/1.0\r\n\r\n"
+    assert_equal ["HTTP/1.0 200 OK", "Content-Length: 0"], header(sock)
+    sock.close
+  end
+
+  def test_http11_connection_header_no_queue
+    @server = Puma::Server.new @app, @events, queue_requests: false
+    server_run app: ->(_) { [200, {}, [""]] }
+    sock = send_http "GET / HTTP/1.1\r\n\r\n"
+    assert_equal ["HTTP/1.1 200 OK", "Connection: close", "Content-Length: 0"], header(sock)
+    sock.close
+  end
+
+  def test_http10_connection_header_no_queue
+    @server = Puma::Server.new @app, @events, queue_requests: false
+    server_run app: ->(_) { [200, {}, [""]] }
+    sock = send_http "GET / HTTP/1.0\r\n\r\n"
+    assert_equal ["HTTP/1.0 200 OK", "Content-Length: 0"], header(sock)
+    sock.close
   end
 end
