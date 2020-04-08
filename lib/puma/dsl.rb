@@ -736,5 +736,43 @@ module Puma
       end
     end
 
+    # Include thread-pool backtraces in runner stats.
+    # This is off by default.
+    #
+    # @example
+    #   thread_backtraces
+    def thread_backtraces(answer=true)
+      @options[:thread_backtraces] = answer
+    end
+
+    # Apply a filter to thread-pool backtraces.
+    #
+    # @example
+    #   require 'active_support/backtrace_cleaner'
+    #   bc = ActiveSupport::BacktraceCleaner.new
+    #   bc.add_filter   { |line| line.gsub(Rails.root, '') }
+    #   bc.add_silencer { |line| line =~ /puma|rubygems/ }
+    #   thread_backtrace_filter &bc.method(:clean)
+    def thread_backtrace_filter(&block)
+      @options[:thread_backtrace_filter] = block
+    end
+
+    # Include garbage collection statistics in runner stats.
+    # This is off by default.
+    #
+    # @example
+    #   gc_stats
+    def gc_stats(answer=true)
+      @options[:gc_stats] = answer
+    end
+
+    # Worker reporting interval in seconds (default 5).
+    #
+    # @note Cluster mode only.
+    # @example
+    #   worker_check_interval 1
+    def worker_check_interval(seconds)
+      @options[:worker_check_interval] = Float(seconds)
+    end
   end
 end

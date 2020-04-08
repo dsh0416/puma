@@ -187,7 +187,8 @@ module Puma
         :logger => STDOUT,
         :persistent_timeout => Const::PERSISTENT_TIMEOUT,
         :first_data_timeout => Const::FIRST_DATA_TIMEOUT,
-        :raise_exception_on_sigterm => true
+        :raise_exception_on_sigterm => true,
+        :worker_check_interval => Const::WORKER_CHECK_INTERVAL
       }
     end
 

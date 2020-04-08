@@ -183,7 +183,7 @@ module Puma
     def check_workers(force=false)
       return if !force && @next_check && @next_check >= Time.now
 
-      @next_check = Time.now + Const::WORKER_CHECK_INTERVAL
+      @next_check = Time.now + @options[:worker_check_interval]
 
       any = false
 
@@ -286,9 +286,12 @@ module Puma
         Puma.set_thread_name "stat payload"
 
         while true
-          sleep Const::WORKER_CHECK_INTERVAL
+          sleep @options[:worker_check_interval]
           begin
-            io << "p#{Process.pid}#{server.stats.to_json}\n"
+            stats = server.stats
+            stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+            stats[:gc] = GC.stat if @options[:gc_stats]
+            io << "p#{Process.pid}#{stats.to_json}\n"
           rescue IOError
             Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
             break
@@ -501,7 +504,7 @@ module Puma
 
             force_check = false
 
-            res = IO.select([read], nil, nil, Const::WORKER_CHECK_INTERVAL)
+            res = IO.select([read], nil, nil, @options[:worker_check_interval])
 
             if res
               req = read.read_nonblock(1)

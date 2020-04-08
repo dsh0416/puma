@@ -14,9 +14,12 @@ module Puma
   # that this inherits from.
   class Single < Runner
     def stats
-      {
+      stats = {
         started_at: @started_at.utc.iso8601
       }.merge(@server.stats)
+      stats[:thread_status] = @launcher.thread_pool_status if @options[:thread_backtraces]
+      stats[:gc] = GC.stat if @options[:gc_stats]
+      stats
     end
 
     def restart
