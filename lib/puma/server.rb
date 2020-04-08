@@ -172,6 +172,13 @@ module Puma
       @thread_pool and @thread_pool.pool_capacity
     end
 
+    def wait_for_threads_to_finish
+      @thread_pool.wait_for_threads_to_finish(
+        tick_time: ENV.fetch('PUMA_INJECT_LATENCY', '0.001').to_f,
+        max_wait_ticks: ENV.fetch('PUMA_INJECT_WAIT_TICKS', '3').to_i
+      )
+    end
+
     # Runs the server.
     #
     # If +background+ is true (the default) then a thread is spun
@@ -283,6 +290,8 @@ module Puma
                 break if handle_check
               else
                 begin
+                  wait_for_threads_to_finish
+
                   if io = sock.accept_nonblock
                     client = Client.new io, @binder.env(sock)
                     if remote_addr_value
