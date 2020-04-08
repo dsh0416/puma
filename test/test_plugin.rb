@@ -22,7 +22,7 @@ class TestPlugin < Minitest::Test
       c.bind uri.to_s
       c.plugin :log_stats
       c.app do |_|
-        sleep Puma::Cluster::WORKER_CHECK_INTERVAL + 2
+        sleep 1
         [200, {}, ["Hello"]]
       end
     end
@@ -42,9 +42,13 @@ class TestPlugin < Minitest::Test
     launcher = Puma::Launcher.new(config, events: events)
     thread = Thread.new { launcher.run }
 
-    true while (log = r.gets.tap(&method(:puts))) && log !~ /{.*}/
+    # Keep reading server-log lines until it contains a json object `{}`.
+    # Copy output to stdout if debugging (PUMA_DEBUG=1).
+    stdio = Puma::Events.stdio
+    true while (log = r.gets.tap(&stdio.method(:debug))) && log !~ /{.*}/
+
     log = log.sub(/^\[\d+\] /, '')
-    assert_equal 1, JSON.parse(log)['total']
+    assert_equal 1, JSON.parse(log)['running']
   ensure
     launcher && launcher.stop
     thread && thread.join
