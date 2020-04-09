@@ -54,7 +54,10 @@ module Puma
       @reaper = nil
 
       @mutex.synchronize do
-        @min.times { spawn_thread }
+        @min.times do
+          spawn_thread
+          @not_full.wait(@mutex)
+        end
       end
 
       @clean_thread_locals = false

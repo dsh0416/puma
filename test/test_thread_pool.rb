@@ -138,6 +138,7 @@ class TestThreadPool < Minitest::Test
     pool << 2
 
     assert_equal 2, pool.spawned
+    Thread.pass until pool.waiting == 0
     pool.trim
     pool.trim
 
@@ -265,5 +266,10 @@ class TestThreadPool < Minitest::Test
       assert_equal 0, pool.spawned
       assert rescued
     end
+  end
+
+  def test_waiting_on_startup
+    pool = new_pool(1, 2)
+    assert_equal 1, pool.waiting
   end
 end
