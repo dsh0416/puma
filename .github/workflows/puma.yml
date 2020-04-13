@@ -17,8 +17,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu ]
-        ruby: [ 2.7 ]
+        os: [ ubuntu, macos, windows ]
+        ruby: [ 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, head, jruby, truffleruby-head ]
+        include:
+          - { os: windows , ruby: mingw }
+        exclude:
+          - { os: windows , ruby: head }
+          - { os: windows , ruby: jruby }
+          - { os: windows , ruby: truffleruby-head }
 
     steps:
       - name: repo checkout
@@ -36,6 +42,10 @@ jobs:
       - name:  bundle install
         shell: pwsh
         run:   |
+          # update RubyGems in Ruby 2.2, bundle install
+          if ('${{ matrix.ruby }}' -lt '2.3') {
+            gem update --system 2.7.10 --no-document
+          }
           bundle install --jobs 4 --retry 3 --path=.bundle/puma
 
       - name: compile

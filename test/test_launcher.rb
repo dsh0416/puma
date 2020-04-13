@@ -7,7 +7,10 @@ class TestLauncher < Minitest::Test
   def test_puma_stats
     $stdout.sync = true
     puts '1'
-    conf = Puma::Configuration.new {|c| c.clear_binds!}
+    conf = Puma::Configuration.new do |c|
+      c.clear_binds!
+      c.app ->(){}
+    end
     puts '2'
     launcher = launcher(conf)
     puts '3'
