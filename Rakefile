@@ -62,7 +62,9 @@ file "lib/puma/puma_http11.rb" do |t|
   end
 end
 
-Rake::TestTask.new(:test)
+Rake::TestTask.new(:test) do |t|
+  t.pattern = 'test/test_launcher.rb'
+end
 
 # tests require extension be compiled, but depend on the platform
 if Puma.jruby?
@@ -79,11 +81,7 @@ namespace :test do
   end
 
   desc "Run all tests"
-  if (Puma.jruby? && ENV['TRAVIS']) || Puma.windows?
-    task :all => :test
-  else
-    task :all => [:test, "test:integration"]
-  end
+  task :all => :test
 end
 
 task :default => [:rubocop, "test:all"]
