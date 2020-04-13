@@ -159,14 +159,18 @@ module Puma
         else
           ENV.to_h
         end
-
+      puts '11'
       @config.clamp
 
       @config.plugins.fire_starts self
+      puts '22'
 
       setup_signals
+      puts '33'
       set_process_title
+      puts '44'
       @runner.run
+      puts '55'
 
       case @status
       when :halt

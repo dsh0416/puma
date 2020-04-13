@@ -11,10 +11,16 @@ class TestLauncher < Minitest::Test
     puts '2'
     launcher = launcher(conf)
     puts '3'
-    launcher.events.on_booted do
-      puts '1a'
-      launcher.stop
-      puts '2a'
+    Thread.new do
+      begin
+        sleep 0.1
+        puts '1a'
+        launcher.stop
+        puts '2a'
+      rescue => e
+        puts "Error in booted: #{e}\n#{e.backtrace.join("\n")}"
+        raise
+      end
     end
     puts '4'
     launcher.run

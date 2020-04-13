@@ -39,25 +39,32 @@ module Puma
 
     def run
       output_header "single"
-
+      puts 'run 1'
       load_and_bind
+      puts 'run 2'
 
       Plugins.fire_background
+      puts 'run 3'
 
       @launcher.write_state
+      puts 'run 4'
 
       start_control
+      puts 'run 5'
 
       @server = server = start_server
 
+      puts 'run 6'
 
       log "Use Ctrl-C to stop"
       redirect_io
 
       @launcher.events.fire_on_booted!
+      puts 'run 7'
 
       begin
         server.run.join
+        puts 'run 8'
       rescue Interrupt
         # Swallow it
       end
