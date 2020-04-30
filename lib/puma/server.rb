@@ -232,7 +232,9 @@ module Puma
           if @queue_requests
             process_now = client.eagerly_finish
           else
-            client.finish(@first_data_timeout)
+            @thread_pool.with_force_shutdown do
+              client.finish(@first_data_timeout)
+            end
             process_now = true
           end
         rescue MiniSSL::SSLError => e
@@ -422,7 +424,11 @@ module Puma
               check_for_more_data = false
             end
 
-            unless client.reset(check_for_more_data)
+            next_request_ready = @thread_pool.with_force_shutdown do
+              client.reset(check_for_more_data)
+            end
+
+            unless next_request_ready
               @shutdown_mutex.synchronize do
                 return unless @queue_requests
                 close_socket = false
@@ -434,8 +440,8 @@ module Puma
           end
         end
 
-      # The client disconnected while we were reading data
-      rescue ConnectionError
+      # The client disconnected or threadpool shut down while we were reading data
+      rescue ConnectionError, ThreadPool::ForceShutdown
         # Swallow them. The ensure tries to close +client+ down
 
       # SSL handshake error
@@ -638,7 +644,9 @@ module Puma
 
       begin
         begin
-          status, headers, res_body = @app.call(env)
+          status, headers, res_body = @thread_pool.with_force_shutdown do
+            @app.call(env)
+          end
 
           return :async if req.hijacked
 
@@ -936,7 +944,7 @@ module Puma
 
       if @thread_pool
         if timeout = @options[:force_shutdown_after]
-          @thread_pool.shutdown timeout.to_i
+          @thread_pool.shutdown timeout.to_f
         else
           @thread_pool.shutdown
         end

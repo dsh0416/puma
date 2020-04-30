@@ -97,50 +97,53 @@ module Puma
       @spawned += 1
 
       th = Thread.new(@spawned) do |spawned|
-        Puma.set_thread_name 'threadpool %03i' % spawned
-        todo  = @todo
-        block = @block
-        mutex = @mutex
-        not_empty = @not_empty
-        not_full = @not_full
+        with_force_shutdown(:never) do
+          Thread.exit if @shutdown == :force
+          Puma.set_thread_name 'threadpool %03i' % spawned
+          todo  = @todo
+          block = @block
+          mutex = @mutex
+          not_empty = @not_empty
+          not_full = @not_full
 
-        extra = @extra.map { |i| i.new }
+          extra = @extra.map { |i| i.new }
 
-        while true
-          work = nil
+          while true
+            work = nil
 
-          mutex.synchronize do
-            while todo.empty?
-              if @trim_requested > 0
-                @trim_requested -= 1
-                @spawned -= 1
-                @workers.delete th
-                Thread.exit
+            mutex.synchronize do
+              while todo.empty?
+                if @trim_requested > 0
+                  @trim_requested -= 1
+                  @spawned -= 1
+                  @workers.delete th
+                  Thread.exit
+                end
+
+                @waiting += 1
+                if @out_of_band_pending && trigger_out_of_band_hook
+                  @out_of_band_pending = false
+                end
+                not_full.signal
+                begin
+                  not_empty.wait mutex
+                ensure
+                  @waiting -= 1
+                end
               end
 
-              @waiting += 1
-              if @out_of_band_pending && trigger_out_of_band_hook
-                @out_of_band_pending = false
-              end
-              not_full.signal
-              begin
-                not_empty.wait mutex
-              ensure
-                @waiting -= 1
-              end
+              work = todo.shift
             end
 
-            work = todo.shift
-          end
+            if @clean_thread_locals
+              ThreadPool.clean_thread_locals
+            end
 
-          if @clean_thread_locals
-            ThreadPool.clean_thread_locals
-          end
-
-          begin
-            @out_of_band_pending = true if block.call(work, *extra)
-          rescue Exception => e
-            STDERR.puts "Error reached top of thread-pool: #{e.message} (#{e.class})"
+            begin
+              @out_of_band_pending = true if block.call(work, *extra)
+            rescue Exception => e
+              STDERR.puts "Error reached top of thread-pool: #{e.message} (#{e.class})"
+            end
           end
         end
       end
@@ -322,6 +325,12 @@ module Puma
       @reaper.start!
     end
 
+    # Allows ForceShutdown to be raised in blocking operations in the
+    # provided block if the thread is forced to shutdown during execution.
+    def with_force_shutdown(type = :on_blocking, &block)
+      Thread.handle_interrupt(ForceShutdown => type, &block)
+    end
+
     # Tell all threads in the pool to exit and wait for them to finish.
     # Wait +timeout+ seconds then raise +ForceShutdown+ in remaining threads.
     # Next, wait an extra +grace+ seconds then force-kill remaining threads.
@@ -356,7 +365,9 @@ module Puma
         join.call(timeout)
 
         # If threads are still running, raise ForceShutdown and wait to finish.
+        @shutdown = :force
         threads.each do |t|
+          next if t.respond_to?(:name) && t.name.nil?
           t.raise ForceShutdown
         end
         join.call(SHUTDOWN_GRACE_TIME)
