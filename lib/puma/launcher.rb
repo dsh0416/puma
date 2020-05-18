@@ -153,8 +153,13 @@ module Puma
       previous_env =
         if defined?(Bundler)
           env = Bundler::ORIGINAL_ENV.dup
+          bundler = begin
+            Gem::Specification.find_by_name('bundler').full_require_paths.map {|path| "-I #{path}"}.join(' ')
+          rescue LoadError
+            nil
+          end
           # add -rbundler/setup so we load from Gemfile when restarting
-          bundle = "-rbundler/setup"
+          bundle = "#{bundler} -rbundler/setup"
           env["RUBYOPT"] = [env["RUBYOPT"], bundle].join(" ").lstrip unless env["RUBYOPT"].to_s.include?(bundle)
           env
         else
