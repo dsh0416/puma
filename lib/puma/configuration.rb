@@ -307,7 +307,7 @@ module Puma
       # a Gemfile
       if ENV.key? 'PUMA_BUNDLER_PRUNED'
         begin
-          require 'bundler/setup'
+          require 'bundler'
         rescue LoadError
         end
       end

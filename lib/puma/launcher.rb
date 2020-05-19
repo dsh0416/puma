@@ -152,11 +152,7 @@ module Puma
     def run
       previous_env =
         if defined?(Bundler)
-          env = Bundler::ORIGINAL_ENV.dup
-          # add -rbundler/setup so we load from Gemfile when restarting
-          bundle = "-rbundler/setup"
-          env["RUBYOPT"] = [env["RUBYOPT"], bundle].join(" ").lstrip unless env["RUBYOPT"].to_s.include?(bundle)
-          env
+          Bundler::ORIGINAL_ENV.dup
         else
           ENV.to_h
         end
