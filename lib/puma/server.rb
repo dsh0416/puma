@@ -219,8 +219,7 @@ module Puma
           if process_now
             process_client client, buffer
           else
-            client.set_timeout @first_data_timeout
-            @reactor.add client
+            @reactor.add client, @first_data_timeout
           end
         end
 
@@ -231,8 +230,18 @@ module Puma
       @thread_pool.clean_thread_locals = @options[:clean_thread_locals]
 
       if @queue_requests
-        @reactor = Reactor.new self, @thread_pool
-        @reactor.run_in_thread
+        @reactor = Reactor.new do |client, timeout_in|
+          if client.closed?
+            # nothing
+          elsif timeout_in <= 0 || (!@queue_requests && client.can_close?)
+            client.write_error(408) if client.in_data_phase
+            client.close
+          else
+            @thread_pool << client
+          end
+          true
+        end
+        @reactor.run
       end
 
       if @reaping_time
@@ -308,7 +317,6 @@ module Puma
 
         if queue_requests
           @queue_requests = false
-          @reactor.clear!
           @reactor.shutdown
         end
         graceful_shutdown if @status == :stop || @status == :restart
@@ -385,8 +393,7 @@ module Puma
             unless client.reset(check_for_more_data)
               return unless @queue_requests
               close_socket = false
-              client.set_timeout @persistent_timeout
-              @reactor.add client
+              @reactor.add client, @persistent_timeout
               return
             end
           end

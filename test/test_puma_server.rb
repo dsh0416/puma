@@ -374,7 +374,7 @@ EOF
   end
 
   def test_timeout_in_data_phase
-    @server.first_data_timeout = 2
+    @server.first_data_timeout = 0.01
     server_run
 
     sock = send_http "POST / HTTP/1.1\r\nHost: test.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\n"
