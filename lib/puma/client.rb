@@ -104,6 +104,15 @@ module Puma
       @timeout_at = Time.now + val
     end
 
+    # Number of seconds until the timeout elapses.
+    def timeout
+      [@timeout_at - Time.now, 0].max
+    end
+
+    def <=>(other)
+      @timeout_at <=> other.timeout_at
+    end
+
     def reset(fast_check=true)
       @parser.reset
       @read_header = true
@@ -251,12 +260,14 @@ module Puma
         rescue ThreadPool::ForceShutdown
           nil
         end
-        unless can_read
-          write_error(408) if in_data_phase
-          raise ConnectionError
-        end
+        timeout! unless can_read
       end
       true
+    end
+
+    def timeout!
+      write_error(408) if in_data_phase
+      raise ConnectionError
     end
 
     def write_error(status_code)
