@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require 'nio'
+require 'puma/queue_close'
 require 'set'
+SortedSet.new if RUBY_VERSION < '2.5' # Ruby bug #13735
 
 module Puma
   # Monitors a collection of IO objects, passing objects to a
