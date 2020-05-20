@@ -34,7 +34,6 @@ module Puma
   #
   # Instances of this class are responsible for knowing if
   # the header and body are fully buffered via the `try_to_finish` method.
-  # They can be used to "time out" a response via the `timeout_at` reader.
   class Client
     # The object used for a request with no body. All requests with
     # no body share this one object since it has no state.
@@ -63,8 +62,6 @@ module Puma
       @buffer = nil
       @tempfile = nil
 
-      @timeout_at = nil
-
       @requests_served = 0
       @hijacked = false
 
@@ -76,7 +73,7 @@ module Puma
       @in_last_chunk = false
     end
 
-    attr_reader :env, :to_io, :body, :io, :timeout_at, :ready, :hijacked,
+    attr_reader :env, :to_io, :body, :io, :ready, :hijacked,
                 :tempfile
 
     attr_writer :peerip
@@ -98,10 +95,6 @@ module Puma
 
     def in_data_phase
       !@read_header
-    end
-
-    def set_timeout(val)
-      @timeout_at = Time.now + val
     end
 
     def reset(fast_check=true)
@@ -251,12 +244,14 @@ module Puma
         rescue ThreadPool::ForceShutdown
           nil
         end
-        unless can_read
-          write_error(408) if in_data_phase
-          raise ConnectionError
-        end
+        timeout! unless can_read
       end
       true
+    end
+
+    def timeout!
+      write_error(408) if in_data_phase
+      raise ConnectionError
     end
 
     def write_error(status_code)

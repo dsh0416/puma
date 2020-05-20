@@ -10,7 +10,7 @@ class TestLauncher < Minitest::Test
     deps, dirs = launcher.send(:dependencies_and_files_to_require_after_prune)
 
     assert_equal(1, deps.length)
-    assert_match(%r{^nio4r:[\d.]+$}, deps.first)
+    assert_match(%r{^async:[\d.]+$}, deps.first)
     assert_equal(2, dirs.length)
     assert_match(%r{puma/lib$}, dirs[0]) # lib dir
     assert_match(%r{puma-#{Puma::Const::PUMA_VERSION}$}, dirs[1]) # native extension dir
@@ -26,7 +26,7 @@ class TestLauncher < Minitest::Test
     deps, dirs = launcher(conf).send(:dependencies_and_files_to_require_after_prune)
 
     assert_equal(1, deps.length)
-    assert_match(%r{^nio4r:[\d.]+$}, deps.first)
+    assert_match(%r{^async:[\d.]+$}, deps.first)
     assert_equal(3, dirs.length)
     assert_match(%r{puma/lib$}, dirs[0]) # lib dir
     assert_match(%r{puma-#{Puma::Const::PUMA_VERSION}$}, dirs[1]) # native extension dir

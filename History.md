@@ -63,6 +63,7 @@
   * JSON parse cluster worker stats instead of regex (#2124)
   * Support parallel tests in verbose progress reporting (#2223)
   * Refactor error handling in server accept loop (#2239)
+  * Refactor Reactor and Client request buffering (#2279)
   
 ## 4.3.4/4.3.5 and 3.12.5/3.12.6 / 2020-05-22
 

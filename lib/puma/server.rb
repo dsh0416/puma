@@ -184,58 +184,17 @@ module Puma
 
       @status = :run
 
-      @thread_pool = ThreadPool.new(@min_threads,
-                                    @max_threads,
-                                    ::Puma::IOBuffer) do |client, buffer|
-
-        # Advertise this server into the thread
-        Thread.current[ThreadLocalKey] = self
-
-        process_now = false
-
-        begin
-          if @queue_requests
-            process_now = client.eagerly_finish
-          else
-            client.finish(@first_data_timeout)
-            process_now = true
-          end
-        rescue MiniSSL::SSLError => e
-          ssl_socket = client.io
-          addr = ssl_socket.peeraddr.last
-          cert = ssl_socket.peercert
-
-          client.close
-
-          @events.ssl_error e, addr, cert
-        rescue HttpParserError => e
-          client.write_error(400)
-          client.close
-
-          @events.parse_error e, client
-        rescue ConnectionError, EOFError => e
-          client.close
-
-          @events.connection_error e, client
-        else
-          if process_now
-            process_client client, buffer
-          else
-            client.set_timeout @first_data_timeout
-            @reactor.add client
-          end
-        end
-
-        process_now
-      end
+      @thread_pool = ThreadPool.new(
+        @min_threads,
+        @max_threads,
+        ::Puma::IOBuffer,
+        &method(:process_client)
+      )
 
       @thread_pool.out_of_band_hook = @options[:out_of_band]
       @thread_pool.clean_thread_locals = @options[:clean_thread_locals]
 
-      if @queue_requests
-        @reactor = Reactor.new self, @thread_pool
-        @reactor.run_in_thread
-      end
+      @reactor = @queue_requests && Reactor.new
 
       if @reaping_time
         @thread_pool.auto_reap!(@reaping_time)
@@ -258,13 +217,63 @@ module Puma
       end
     end
 
+    # Queue a client in the Reactor with the specified timeout.
+    #
+    # It is responsible for ensuring that a request has been completely received
+    # before it starts to be processed by the ThreadPool. This may be known as read buffering.
+    # If read buffering is not done, and no other read buffering is performed (such as by an application server
+    # such as nginx) then the application would be subject to a slow client attack.
+    #
+    # For a graphical representation of how the request buffer works see [architecture.md](https://github.com/puma/puma/blob/master/docs/architecture.md#connection-pipeline).
+    #
+    # The method checks to see if it has the full header and body with
+    # the `Puma::Client#try_to_finish` method. If the full request has been sent,
+    # then the request is passed to the ThreadPool (`@thread_pool << client`)
+    # so that a "worker thread" can pick up the request and begin to execute application logic.
+    #
+    # If a client object times out (`Async::TimeoutError`), a 408 response is written
+    # and its connection is closed.
+    #
+    # If the Reactor shuts down (`Async::Stop`), all queued Clients are either timed out
+    # or passed to the ThreadPool, depending on their current state (#can_close?).
+    #
+    # Otherwise, if the full request is not ready then the client will remain in the reactor
+    # (`Async::Task.yield`). When the client sends more data to the socket the fiber
+    # will resume and again check to see if the Client is ready to be passed to the thread pool.
+    def queue_client(client, timeout)
+      @reactor && @reactor.async do
+        begin
+          monitor = @reactor.register(client, :r)
+          begin
+            @reactor.with_timeout(timeout) do
+              loop do
+                Async::Task.yield
+                break if client.try_to_finish
+              end
+              @thread_pool << client
+            end
+          rescue Async::Stop
+            client.can_close? ?
+              client.timeout! :
+              @thread_pool << client
+          rescue Async::TimeoutError
+            client.timeout!
+          ensure
+            monitor.close
+          end
+        rescue StandardError => e
+          client_error(e, client)
+          client.close
+        end
+      end
+    end
+
     def handle_servers
       @check, @notify = Puma::Util.pipe unless @notify
       begin
         check = @check
         sockets = [check] + @binder.ios
         pool = @thread_pool
-        queue_requests = @queue_requests
 
         remote_addr_value = nil
         remote_addr_header = nil
@@ -308,11 +317,7 @@ module Puma
 
         @events.fire :state, @status
 
-        if queue_requests
-          @queue_requests = false
-          @reactor.clear!
-          @reactor.shutdown
-        end
+        @reactor.close if @reactor
         graceful_shutdown if @status == :stop || @status == :restart
       rescue Exception => e
         @events.unknown_error e, nil, "Exception handling servers"
@@ -345,27 +350,43 @@ module Puma
       return false
     end
 
-    # Given a connection on +client+, handle the incoming requests.
+    # Given a connection on +client+, handle the incoming requests,
+    # or queue the connection in the Reactor if no request is available.
     #
-    # This method support HTTP Keep-Alive so it may, depending on if the client
+    # This method is called from a ThreadPool worker thread.
+    #
+    # This method supports HTTP Keep-Alive so it may, depending on if the client
     # indicates that it supports keep alive, wait for another request before
     # returning.
     #
+    # Return true if one or more requests were processed.
     def process_client(client, buffer)
+      requests = 0
+      close_socket = true
+      # Advertise this server into the thread
+      Thread.current[ThreadLocalKey] = self
+
+      clean_thread_locals = @options[:clean_thread_locals]
+
       begin
+        if !client.eagerly_finish &&
+          queue_client(client, @first_data_timeout)
 
-        clean_thread_locals = @options[:clean_thread_locals]
-        close_socket = true
+          close_socket = false
+          return false
+        end
 
-        requests = 0
+        client.finish(@first_data_timeout)
 
         while true
-          case handle_request(client, buffer)
+          keep_alive = handle_request(client, buffer)
+
+          case keep_alive
           when false
-            return
+            break
           when :async
             close_socket = false
-            return
+            break
           when true
             buffer.reset
 
@@ -384,46 +405,16 @@ module Puma
             end
 
             unless client.reset(check_for_more_data)
-              return unless @queue_requests
-              close_socket = false
-              client.set_timeout @persistent_timeout
-              @reactor.add client
-              return
+              close_socket = false if queue_client(client, @persistent_timeout)
+              break
             end
           end
         end
-
-      # The client disconnected while we were reading data
-      rescue ConnectionError
-        # Swallow them. The ensure tries to close +client+ down
-
-      # SSL handshake error
-      rescue MiniSSL::SSLError => e
-        lowlevel_error(e, client.env)
-
-        ssl_socket = client.io
-        addr = ssl_socket.peeraddr.last
-        cert = ssl_socket.peercert
-
-        close_socket = true
-
-        @events.ssl_error e, addr, cert
-
-      # The client doesn't know HTTP well
-      rescue HttpParserError => e
-        lowlevel_error(e, client.env)
-
-        client.write_error(400)
-
-        @events.parse_error e, client
-
-      # Server error
+        true
       rescue StandardError => e
-        lowlevel_error(e, client.env)
-
-        client.write_error(500)
-
-        @events.unknown_error e, nil, "Read"
+        client_error(e, client)
+        # The ensure tries to close +client+ down
+        requests > 0
       ensure
         buffer.reset
 
@@ -833,6 +824,31 @@ module Puma
       stream.rewind
 
       return stream
+    end
+
+    # Handle various error types thrown by Client I/O operations.
+    def client_error(e, client)
+      return if [ConnectionError, EOFError].include?(e.class)
+
+      lowlevel_error(e, client.env)
+      case e
+      when MiniSSL::SSLError
+        ssl_socket = client.io
+        addr = begin
+          ssl_socket.peeraddr.last
+          # EINVAL can happen when browser closes socket w/security exception
+        rescue IOError, Errno::EINVAL
+          "<unknown>"
+        end
+        cert = ssl_socket.peercert
+        @events.ssl_error e, addr, cert
+      when HttpParserError
+        client.write_error(400)
+        @events.parse_error e, client
+      else
+        client.write_error(500)
+        @events.unknown_error e, nil, "Read"
+      end
     end
 
     # A fallback rack response if +@app+ raises as exception.
