@@ -290,6 +290,12 @@ module Puma
       @requests_served > 0 && @parsed_bytes == 0
     end
 
+    # Sort clients by their timeout_at value in sorted sets.
+    # Treat nil as infinite timeout.
+    def <=>(other)
+      (@timeout_at || Float::INFINITY).<=>(other.timeout_at || Float::INFINITY)
+    end
+
     private
 
     def setup_body

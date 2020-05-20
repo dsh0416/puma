@@ -4,6 +4,7 @@ require 'puma/util'
 require 'puma/minissl'
 
 require 'nio'
+require 'set'
 
 module Puma
   # Internal Docs, Not a public interface.
@@ -60,12 +61,9 @@ module Puma
       @ready, @trigger = Puma::Util.pipe
       @input = []
       @sleep_for = DefaultSleepFor
-      @timeouts = []
 
-      mon = @selector.register(@ready, :r)
-      mon.value = @ready
-
-      @monitors = [mon]
+      @selector.register(@ready, :r).value = @ready
+      @monitors = SortedSet.new
     end
 
     private
@@ -133,7 +131,7 @@ module Puma
 
       while true
         begin
-          ready = selector.select @sleep_for
+          ready = selector.select calculate_sleep
         rescue IOError => e
           Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
           if monitors.any? { |mon| mon.value.closed? }
@@ -176,33 +174,25 @@ module Puma
                       # entirely
                     else
                       mon.value = c
-                      @timeouts << mon if c.timeout_at
-                      monitors << mon
+                      monitors << c
                     end
                   end
                   @input.clear
-
-                  @timeouts.sort! { |a,b| a.value.timeout_at <=> b.value.timeout_at }
-                  calculate_sleep
                 when "c"
-                  monitors.reject! do |submon|
-                    if submon.value == @ready
-                      false
+                  monitors.reject! do |c|
+                    if c.can_close?
+                      c.close
                     else
-                      if submon.value.can_close?
-                        submon.value.close
-                      else
-                        # Pass remaining open client connections to the thread pool.
-                        @app_pool << submon.value
-                      end
-                      begin
-                        selector.deregister submon.value
-                      rescue IOError
-                        # nio4r on jruby seems to throw an IOError here if the IO is closed, so
-                        # we need to swallow it.
-                      end
-                      true
+                      # Pass remaining open client connections to the thread pool.
+                      @app_pool << c
                     end
+                    begin
+                      selector.deregister c
+                    rescue IOError
+                      # nio4r on jruby seems to throw an IOError here if the IO is closed, so
+                      # we need to swallow it.
+                    end
+                    true
                   end
                 when "!"
                   return
@@ -211,19 +201,10 @@ module Puma
             else
               c = mon.value
 
-              # We have to be sure to remove it from the timeout
-              # list or we'll accidentally close the socket when
-              # it's in use!
-              if c.timeout_at
-                @mutex.synchronize do
-                  @timeouts.delete mon
-                end
-              end
-
               begin
                 if c.try_to_finish
                   @app_pool << c
-                  clear_monitor mon
+                  clear_monitor c
                 end
 
               # Don't report these to the lowlevel_error handler, otherwise
@@ -233,7 +214,7 @@ module Puma
                 c.write_error(500)
                 c.close
 
-                clear_monitor mon
+                clear_monitor c
 
               # SSL handshake failure
               rescue MiniSSL::SSLError => e
@@ -250,7 +231,7 @@ module Puma
                 cert = ssl_socket.peercert
 
                 c.close
-                clear_monitor mon
+                clear_monitor c
 
                 @events.ssl_error @server, addr, cert, e
 
@@ -261,7 +242,7 @@ module Puma
                 c.write_error(400)
                 c.close
 
-                clear_monitor mon
+                clear_monitor c
 
                 @events.parse_error @server, c.env, e
               rescue StandardError => e
@@ -270,36 +251,25 @@ module Puma
                 c.write_error(500)
                 c.close
 
-                clear_monitor mon
+                clear_monitor c
               end
             end
           end
         end
 
-        unless @timeouts.empty?
-          @mutex.synchronize do
-            now = Time.now
-
-            while @timeouts.first.value.timeout_at < now
-              mon = @timeouts.shift
-              c = mon.value
-              c.write_error(408) if c.in_data_phase
-              c.close
-
-              clear_monitor mon
-
-              break if @timeouts.empty?
-            end
-
-            calculate_sleep
-          end
+        now = Time.now
+        monitors.each do |c|
+          break unless c.timeout_at < now
+          c.write_error(408) if c.in_data_phase
+          c.close
+          clear_monitor c
         end
       end
     end
 
-    def clear_monitor(mon)
-      @selector.deregister mon.value
-      @monitors.delete mon
+    def clear_monitor(c)
+      @selector.deregister c
+      @monitors.delete c
     end
 
     public
@@ -330,7 +300,7 @@ module Puma
     # The `calculate_sleep` sets the value that the `NIO::Selector#select` will
     # sleep for in the main reactor loop when no sockets are being written to.
     #
-    # The values kept in `@timeouts` are sorted so that the first timeout
+    # The values kept in `@monitors` are sorted so that the first timeout
     # comes first in the array. When there are no timeouts the default timeout is used.
     #
     # Otherwise a sleep value is set that is the same as the amount of time it
@@ -338,10 +308,11 @@ module Puma
     #
     # If that value is in the past, then a sleep value of zero is used.
     def calculate_sleep
-      if @timeouts.empty?
+      first_timeout = @monitors.first
+      if first_timeout.nil? || (timeout = first_timeout.timeout_at).nil?
         @sleep_for = DefaultSleepFor
       else
-        diff = @timeouts.first.value.timeout_at.to_f - Time.now.to_f
+        diff = timeout.to_f - Time.now.to_f
 
         if diff < 0.0
           @sleep_for = 0
@@ -372,8 +343,7 @@ module Puma
     # the `NIO::Selector#select` and then there is logic to detect the value of `*`,
     # pull the contents from `@input` and add them to the sockets array.
     #
-    # If the object passed in has a timeout value in `timeout_at` then
-    # it is added to a `@timeouts` array. This array is then re-arranged
+    # The object is added to a `@monitors` array. This array is then re-arranged
     # so that the first element to timeout will be at the front of the
     # array. Then a value to sleep for is derived in the call to `calculate_sleep`
     def add(c)
