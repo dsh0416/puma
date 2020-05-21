@@ -1,13 +1,14 @@
 # frozen_string_literal: true
 
+require 'delegate'
 require 'nio'
 require 'puma/queue_close'
 require 'set'
 SortedSet.new if RUBY_VERSION < '2.5' # Ruby bug #13735
 
 module Puma
-  # Monitors a collection of IO objects, passing objects to a
-  # block whenever data is available for reading or a timeout is reached.
+  # Monitors a collection of IO objects with associated timeouts.
+  # Pass an IO to a block whenever data is available or the timeout is reached.
   class Reactor
     def initialize(&block)
       @selector = NIO::Selector.new
@@ -28,7 +29,7 @@ module Puma
     end
 
     def add(io, timeout_in)
-      @input << [timeout_in + now, io]
+      @input << WithTimeout.new(io, timeout_in)
       @selector.wakeup
     rescue ClosedQueueError
       @block.call(io, timeout_in)
@@ -44,7 +45,7 @@ module Puma
 
     def reactor_loop
       until @input.closed? && @input.empty?
-        timeout = (timeout_at, _ = @ios.first) && [0, timeout_at - now].max
+        timeout = (io = @ios.first) && [0, io.timeout_in].max
         select(timeout, &method(:wakeup!))
         timeout!(&method(:wakeup!))
         register @input.pop until @input.empty?
@@ -60,7 +61,7 @@ module Puma
       @selector.select(timeout) { |mon| yield mon.value }
     rescue IOError => e
       Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
-      if (closed = @ios.select {|_, io| io.closed?}).any?
+      if (closed = @ios.select(&:closed?)).any?
         STDERR.puts "Error in select: #{e.message} (#{e.class})"
         STDERR.puts e.backtrace
         closed.each(&block)
@@ -71,27 +72,38 @@ module Puma
     end
 
     def timeout!(&block)
-      @ios.take_while {|timeout_at, _| timeout_at < now}.each(&block)
+      @ios.take_while {|io| io.timeout_in < 0}.each(&block)
     end
 
     def register(obj)
-      @ios << @selector.register(obj.last, :r).value = obj
+      @ios << @selector.register(obj, :r).value = obj
     rescue IOError
       # IO is closed so ignore this request entirely
     end
 
-    def wakeup!(obj)
-      timeout, io = obj
-      if @block.call(io, [0, timeout - now].max)
-        @ios.delete obj
+    def wakeup!(io)
+      if @block.call(io, [0, io.timeout_in].max)
+        @ios.delete io
         @selector.deregister io
       end
     rescue IOError
       # nio4r on jruby throws an IOError if the IO is closed, so swallow it.
     end
+  end
 
-    def now
-      Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  class WithTimeout < SimpleDelegator
+    def initialize(obj, timeout_in)
+      super(obj)
+      @timeout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout_in
+    end
+
+    attr_reader :timeout_at
+    def <=>(other)
+      @timeout_at <=> other.timeout_at
+    end
+
+    def timeout_in
+      @timeout_at - Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
   end
 end
