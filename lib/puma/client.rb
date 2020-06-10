@@ -101,16 +101,12 @@ module Puma
     end
 
     def set_timeout(val)
-      @timeout_at = Time.now + val
+      @timeout_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) + val
     end
 
     # Number of seconds until the timeout elapses.
     def timeout
-      [@timeout_at - Time.now, 0].max
-    end
-
-    def <=>(other)
-      @timeout_at <=> other.timeout_at
+      [@timeout_at - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max
     end
 
     def reset(fast_check=true)

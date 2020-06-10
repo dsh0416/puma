@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
 require 'nio'
-
-require 'set'
-SortedSet.new if RUBY_VERSION < '2.5' # Ruby bug #13735
-
 require 'puma/queue_close' if RUBY_VERSION < '2.3'
 
 module Puma
@@ -18,8 +14,7 @@ module Puma
   # This class additionally tracks a timeout for every added object,
   # and wakes up any object when its timeout elapses.
   #
-  # The implementation uses a SortedSet to track monitored objects sorted by timeout,
-  # and a Queue to synchronize adding new objects from the internal select loop.
+  # The implementation uses a Queue to synchronize adding new objects from the internal select loop.
   class Reactor
     # Create a new Reactor to monitor IO objects added by #add.
     # The provided block will be invoked when an IO has data available to read,
@@ -27,7 +22,7 @@ module Puma
     def initialize(&block)
       @selector = NIO::Selector.new
       @input = Queue.new
-      @timeouts = SortedSet.new
+      @timeouts = []
       @block = block
     end
 
@@ -44,7 +39,7 @@ module Puma
     end
 
     # Add a new IO object to monitor.
-    # The object must be sortable and respond to #timeout.
+    # The object must respond to #timeout and #timeout_at.
     def add(io)
       @input << io
       @selector.wakeup
@@ -73,7 +68,10 @@ module Puma
           timed_out = @timeouts.take_while {|t| t.timeout == 0}
           timed_out.each(&method(:wakeup!))
 
-          register(@input.pop) until @input.empty?
+          unless @input.empty?
+            register(@input.pop) until @input.empty?
+            @timeouts.sort_by!(&:timeout_at)
+          end
         end
       rescue StandardError => e
         STDERR.puts "Error in reactor loop escaped: #{e.message} (#{e.class})"
