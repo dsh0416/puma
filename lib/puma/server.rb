@@ -259,7 +259,7 @@ module Puma
     end
 
     def handle_servers
-      @check, @notify = Puma::Util.pipe unless @notify
+      @check, @notify = Puma::Util.pipe unless @notify && !@notify.closed?
       begin
         check = @check
         sockets = [check] + @binder.ios
@@ -318,8 +318,6 @@ module Puma
       ensure
         @check.close unless @check.closed? # Ruby 2.2 issue
         @notify.close
-        @notify = nil
-        @check = nil
       end
 
       @events.fire :state, :done
@@ -372,7 +370,9 @@ module Puma
           return false
         end
 
-        client.finish(@first_data_timeout)
+        @thread_pool.with_force_shutdown do
+          client.finish(@first_data_timeout)
+        end
 
         while true
           keep_alive = handle_request(client, buffer)
@@ -400,7 +400,11 @@ module Puma
               check_for_more_data = false
             end
 
-            unless client.reset(check_for_more_data)
+            next_request_ready = @thread_pool.with_force_shutdown do
+              client.reset(check_for_more_data)
+            end
+
+            unless next_request_ready
               break unless @queue_requests
               close_socket = false
               client.set_timeout @persistent_timeout
@@ -593,8 +597,9 @@ module Puma
 
       begin
         begin
-          status, headers, res_body = @app.call(env)
-
+          status, headers, res_body = @thread_pool.with_force_shutdown do
+            @app.call(env)
+          end
           return :async if req.hijacked
 
           status = status.to_i
@@ -827,7 +832,7 @@ module Puma
 
     # Handle various error types thrown by Client I/O operations.
     def client_error(e, client)
-      return if [ConnectionError, EOFError].include?(e.class)
+      return if [ConnectionError, EOFError, ThreadPool::ForceShutdown].include?(e.class)
 
       lowlevel_error(e, client.env)
       case e
@@ -916,7 +921,7 @@ module Puma
 
       if @thread_pool
         if timeout = @options[:force_shutdown_after]
-          @thread_pool.shutdown timeout.to_i
+          @thread_pool.shutdown timeout.to_f
         else
           @thread_pool.shutdown
         end
@@ -924,7 +929,7 @@ module Puma
     end
 
     def notify_safely(message)
-      @check, @notify = Puma::Util.pipe unless @notify
+      @check, @notify = Puma::Util.pipe unless @notify && !@notify.closed?
       begin
         @notify << message
       rescue IOError
