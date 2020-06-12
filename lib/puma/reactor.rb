@@ -2,6 +2,7 @@
 
 require 'nio'
 require 'puma/queue_close' if RUBY_VERSION < '2.3'
+require 'timers/group'
 
 module Puma
   # Monitors a collection of IO objects, calling a block whenever
@@ -22,7 +23,8 @@ module Puma
     def initialize(&block)
       @selector = NIO::Selector.new
       @input = Queue.new
-      @timeouts = []
+      @timers = Timers::Group.new
+      @timeouts = {}
       @block = block
     end
 
@@ -39,7 +41,7 @@ module Puma
     end
 
     # Add a new IO object to monitor.
-    # The object must respond to #timeout and #timeout_at.
+    # The object must respond to #timeout.
     def add(io)
       @input << io
       @selector.wakeup
@@ -59,19 +61,11 @@ module Puma
     def select_loop
       begin
         until @input.closed? && @input.empty?
-          # Wakeup any registered object that receives incoming data.
-          # Block until the earliest timeout or Selector#wakeup is called.
-          timeout = (earliest = @timeouts.first) && earliest.timeout
-          @selector.select(timeout) {|mon| wakeup!(mon.value)}
-
-          # Wakeup all objects that timed out.
-          timed_out = @timeouts.take_while {|t| t.timeout == 0}
-          timed_out.each(&method(:wakeup!))
-
-          unless @input.empty?
-            register(@input.pop) until @input.empty?
-            @timeouts.sort_by!(&:timeout_at)
+          unless (interval = @timers.wait_interval).to_f < 0
+            @selector.select(interval) {|mon| wakeup!(mon.value)}
           end
+          @timers.fire
+          register(@input.pop) until @input.empty?
         end
       rescue StandardError => e
         STDERR.puts "Error in reactor loop escaped: #{e.message} (#{e.class})"
@@ -79,14 +73,14 @@ module Puma
         retry
       end
       # Wakeup all remaining objects on shutdown.
-      @timeouts.each(&method(:wakeup!))
+      @timers.each(&:fire)
       @selector.close
     end
 
     # Start monitoring the object.
     def register(io)
       @selector.register(io, :r).value = io
-      @timeouts << io
+      @timeouts[io] = @timers.after(io.timeout) {wakeup!(io)}
     end
 
     # 'Wake up' a monitored object by calling the provided block.
@@ -94,7 +88,7 @@ module Puma
     def wakeup!(io)
       if @block.call(io)
         @selector.deregister(io)
-        @timeouts.delete(io)
+        @timeouts[io].cancel
       end
     end
   end
