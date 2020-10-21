@@ -392,6 +392,7 @@ module Puma
       spawn_workers
 
       Signal.trap "SIGINT" do
+        puts "SIGINT stopping"
         stop
       end
 

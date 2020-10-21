@@ -643,7 +643,9 @@ module Puma
 
     def notify_safely(message)
       @notify << message
-    rescue IOError, NoMethodError, Errno::EPIPE
+    rescue IOError, NoMethodError, Errno::EPIPE => e
+      puts "[#{$$}] notify_safely error #{e}, status #{@status}"
+      puts e.backtrace unless shutting_down?
       # The server, in another thread, is shutting down
       Thread.current.purge_interrupt_queue if Thread.current.respond_to? :purge_interrupt_queue
     rescue RuntimeError => e

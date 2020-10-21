@@ -22,7 +22,9 @@ class TestIntegration < Minitest::Test
 
   def teardown
     if defined?(@server) && @server && @pid
+      puts "stopping server #{@pid}"
       stop_server @pid, signal: :INT
+      puts 'stopped'
     end
 
     if @ios_to_close
@@ -69,6 +71,10 @@ class TestIntegration < Minitest::Test
   # that is already stopped/killed, especially since Process.wait2 is
   # blocking
   def stop_server(pid = @pid, signal: :TERM)
+    Thread.new do
+      true while @server.gets.tap(&method(:puts)) rescue nil
+    end
+
     begin
       Process.kill signal, pid
     rescue Errno::ESRCH
@@ -132,7 +138,7 @@ class TestIntegration < Minitest::Test
     pids = []
     re = /pid: (\d+)\) booted, phase: #{phase}/
     while pids.size < size
-      if pid = @server.gets[re, 1]
+      if pid = @server.gets.tap(&method(:puts))[re, 1]
         pids << pid
       end
     end

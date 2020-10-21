@@ -198,7 +198,8 @@ on_refork {File.write('#{refork.path}', 'Reforked')}
 RUBY
     pids = get_worker_pids
     read_body(connect('sleep1')) until refork.read == 'Reforked'
-    refute_includes pids, get_worker_pids(1, workers - 1)
+    refute_includes pids, (new_pids = get_worker_pids(1, workers - 1))
+    puts "Done, pids: #{pids}, #{new_pids}"
   end
 
   def test_fork_worker_spawn
