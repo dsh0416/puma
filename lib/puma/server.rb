@@ -249,7 +249,7 @@ module Puma
         @thread_pool.auto_trim!(@auto_trim_time)
       end
 
-      @check, @notify = Puma::Util.pipe unless @notify
+      @check, @notify = Puma::Util.pipe.tap {puts "#{$$} pipe created"} unless @notify
 
       @events.fire :state, :running
 
@@ -365,7 +365,7 @@ module Puma
           # RuntimeError is Ruby 2.2 issue, can't modify frozen IOError
           # Errno::EBADF is infrequently raised
         end
-        @notify.close
+        @notify.close.tap {puts "#{$$} pipe closed, status #{@status}"}
         @notify = nil
         @check = nil
       end
@@ -662,6 +662,7 @@ module Puma
     # off the request queue before finally exiting.
 
     def stop(sync=false)
+      puts "#{$$} stop: #{caller_locations[0..2]}"
       notify_safely(STOP_COMMAND)
       @thread.join if @thread && sync
     end
