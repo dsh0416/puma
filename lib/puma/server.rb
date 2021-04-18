@@ -100,8 +100,10 @@ module Puma
 
       # Test scheduler implementation using SCHEDULER=1 env variable.
       if ENV['SCHEDULER']
-        require 'libev_scheduler'
-        @scheduler = ->{Libev::Scheduler.new}
+        # require 'libev_scheduler'
+        # @scheduler = ->{ Libev::Scheduler.new }
+        require 'evt'
+        @scheduler = ->{ Evt::Scheduler.new }
       end
 
       temp = !!(@options[:environment] =~ /\A(development|test)\z/)
